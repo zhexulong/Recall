@@ -19,8 +19,11 @@ impl SourceAdapter for GeminiAdapter {
         "GEM"
     }
 
-    fn resume_command(&self, _source_id: &str) -> Option<ResumeCommand> {
-        None
+    fn resume_command(&self, source_id: &str) -> Option<ResumeCommand> {
+        Some(ResumeCommand {
+            program: "gemini".to_string(),
+            args: vec!["--resume".to_string(), source_id.to_string()],
+        })
     }
 
     fn scan(&self) -> anyhow::Result<Vec<RawSession>> {
