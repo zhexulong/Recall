@@ -205,6 +205,20 @@ make release-patch EXECUTE=1    # apply: bump, commit, tag, push
 `release-minor` and `release-major` work the same way. The tag name is
 `v{{version}}` and the commit subject is `chore(release): bump to v{{version}}`.
 
+### Update Homebrew tap
+
+After the GitHub release assets are published, run the project skill to update
+`samzong/homebrew-tap`:
+
+```bash
+/skill:update-recall-homebrew-tap
+```
+
+The skill lives in `.agents/skills/update-recall-homebrew-tap/` so shared
+agent-skill tooling can discover it. It reads the current `Cargo.toml` version,
+verifies the matching GitHub release assets, updates `Formula/recall.rb`
+checksums, and opens a tap PR.
+
 ### First release after a stale baseline
 
 If `Cargo.toml` is at `0.1.0` but tags `v0.1.1`..`v0.1.3` already exist (because
