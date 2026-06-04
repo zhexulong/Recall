@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 7;
 
 #[allow(clippy::missing_transmute_annotations)]
 pub fn register_sqlite_vec() {
@@ -27,6 +27,12 @@ pub fn init(conn: &Connection) -> anyhow::Result<()> {
     }
     if version < 5 {
         migrate_v5(conn)?;
+    }
+    if version < 6 {
+        migrate_v6(conn)?;
+    }
+    if version < 7 {
+        migrate_v7(conn)?;
     }
     Ok(())
 }
@@ -250,10 +256,100 @@ fn migrate_v5(conn: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn migrate_v6(conn: &Connection) -> anyhow::Result<()> {
+    for stmt in [
+        "ALTER TABLE sessions ADD COLUMN custom_title TEXT",
+        "ALTER TABLE sessions ADD COLUMN summary TEXT",
+        "ALTER TABLE sessions ADD COLUMN duration_minutes INTEGER",
+    ] {
+        add_column_if_missing(conn, stmt)?;
+    }
+    conn.execute_batch("PRAGMA user_version = 6;")?;
+    Ok(())
+}
+
+fn migrate_v7(conn: &Connection) -> anyhow::Result<()> {
+    add_column_if_missing(conn, "ALTER TABLE sessions ADD COLUMN source_file_path TEXT")?;
+    conn.execute_batch("PRAGMA user_version = 7;")?;
+    Ok(())
+}
+
+fn add_column_if_missing(conn: &Connection, stmt: &str) -> anyhow::Result<()> {
+    if let Err(err) = conn.execute(stmt, []) {
+        let msg = err.to_string();
+        if !msg.contains("duplicate column name") {
+            return Err(err.into());
+        }
+    }
+    Ok(())
+}
+
 pub fn schema_version(conn: &Connection) -> anyhow::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |row| row.get(0)).map_err(Into::into)
 }
 
 pub const fn current_schema_version() -> i64 {
     SCHEMA_VERSION
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrate_v6_adds_metadata_columns_to_existing_v5_db() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, source TEXT NOT NULL, source_id TEXT NOT NULL,
+                title TEXT NOT NULL, directory TEXT, started_at INTEGER NOT NULL,
+                updated_at INTEGER, message_count INTEGER NOT NULL DEFAULT 0,
+                entrypoint TEXT, UNIQUE(source, source_id)
+            );
+            PRAGMA user_version = 5;",
+        )
+        .unwrap();
+
+        init(&conn).unwrap();
+
+        assert_eq!(schema_version(&conn).unwrap(), SCHEMA_VERSION);
+        for col in ["custom_title", "summary", "duration_minutes"] {
+            let sql = format!("SELECT {col} FROM sessions");
+            conn.prepare(&sql)
+                .unwrap_or_else(|e| panic!("column {col} missing after migrate_v6: {e}"));
+        }
+    }
+
+    #[test]
+    fn migrate_v7_adds_source_file_path_to_existing_v6_db() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, source TEXT NOT NULL, source_id TEXT NOT NULL,
+                title TEXT NOT NULL, directory TEXT, started_at INTEGER NOT NULL,
+                updated_at INTEGER, message_count INTEGER NOT NULL DEFAULT 0,
+                entrypoint TEXT, custom_title TEXT, summary TEXT,
+                duration_minutes INTEGER, UNIQUE(source, source_id)
+            );
+            PRAGMA user_version = 6;",
+        )
+        .unwrap();
+
+        init(&conn).unwrap();
+
+        assert_eq!(schema_version(&conn).unwrap(), SCHEMA_VERSION);
+        conn.prepare("SELECT source_file_path FROM sessions")
+            .unwrap_or_else(|e| panic!("column source_file_path missing after migrate_v7: {e}"));
+    }
+
+    #[test]
+    fn init_is_idempotent() {
+        register_sqlite_vec();
+        let conn = Connection::open_in_memory().unwrap();
+        init(&conn).unwrap();
+        let first = schema_version(&conn).unwrap();
+        init(&conn).unwrap();
+        assert_eq!(schema_version(&conn).unwrap(), first);
+        assert_eq!(first, SCHEMA_VERSION);
+    }
 }

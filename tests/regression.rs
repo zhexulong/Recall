@@ -25,6 +25,9 @@ fn make_session(id: &str, source: &str, source_id: &str, title: &str) -> Session
         updated_at: None,
         message_count: 1,
         entrypoint: None,
+        custom_title: None,
+        summary: None,
+        duration_minutes: None,
     }
 }
 
@@ -247,6 +250,9 @@ fn export_jsonl_emits_session_messages_and_usage_events() {
     session.updated_at = Some(1_800_000_001_000);
     session.message_count = 2;
     session.entrypoint = Some("codex resume raw1".to_string());
+    session.custom_title = Some("Export custom title".to_string());
+    session.summary = Some("Export summary".to_string());
+    session.duration_minutes = Some(12);
     let messages = vec![
         make_message("s1", Role::User, "hello", 0),
         make_message("s1", Role::Assistant, "hi", 1),
@@ -278,6 +284,9 @@ fn export_jsonl_emits_session_messages_and_usage_events() {
     assert_eq!(value["session"]["source"], "codex");
     assert_eq!(value["session"]["source_id"], "raw1");
     assert_eq!(value["session"]["directory"], "/tmp/test");
+    assert_eq!(value["session"]["custom_title"], "Export custom title");
+    assert_eq!(value["session"]["summary"], "Export summary");
+    assert_eq!(value["session"]["duration_minutes"], 12);
     assert_eq!(value["messages"][0]["seq"], 0);
     assert_eq!(value["messages"][0]["role"], "user");
     assert_eq!(value["messages"][1]["seq"], 1);
@@ -563,6 +572,9 @@ fn sync_skips_unchanged_session() {
         updated_at: Some(2000),
         message_count: 2,
         entrypoint: None,
+        custom_title: None,
+        summary: None,
+        duration_minutes: None,
     };
     store.insert_session(&session).unwrap();
 
@@ -583,6 +595,9 @@ fn sync_detects_new_messages() {
         updated_at: Some(2000),
         message_count: 2,
         entrypoint: None,
+        custom_title: None,
+        summary: None,
+        duration_minutes: None,
     };
     store.insert_session(&session).unwrap();
     store.insert_messages(&[make_message("s1", Role::User, "hello", 0)]).unwrap();
@@ -615,6 +630,9 @@ fn sync_detects_updated_timestamp() {
         updated_at: Some(2000),
         message_count: 3,
         entrypoint: None,
+        custom_title: None,
+        summary: None,
+        duration_minutes: None,
     };
     store.insert_session(&session).unwrap();
 

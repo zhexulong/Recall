@@ -67,6 +67,9 @@ pub struct Session {
     pub updated_at: Option<i64>,
     pub message_count: u32,
     pub entrypoint: Option<String>,
+    pub custom_title: Option<String>,
+    pub summary: Option<String>,
+    pub duration_minutes: Option<u32>,
 }
 
 #[derive(Debug, Clone)]

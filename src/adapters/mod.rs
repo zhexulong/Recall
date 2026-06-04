@@ -50,6 +50,10 @@ pub struct RawSession {
     pub usage_parser_version: Option<u32>,
     pub events: Vec<RawSessionEvent>,
     pub event_parser_version: Option<u32>,
+    pub source_file_path: Option<String>,
+    pub custom_title: Option<String>,
+    pub summary: Option<String>,
+    pub duration_minutes: Option<u32>,
 }
 
 impl RawSession {
@@ -72,6 +76,10 @@ impl RawSession {
             usage_parser_version: None,
             events: Vec::new(),
             event_parser_version: None,
+            source_file_path: None,
+            custom_title: None,
+            summary: None,
+            duration_minutes: None,
         }
     }
 
