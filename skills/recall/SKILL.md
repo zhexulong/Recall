@@ -24,10 +24,46 @@ Pick the workflow from user intent. Do not run the full project-review scoping f
 | Share a live link | "分享会话", "分享这个对话", "share this session", "给我链接" | Publish Or Refresh Share Link |
 | Refresh an existing link | "用 recall 更新分享链接", "刷新分享", "重新分享", "update the share link" | Publish Or Refresh Share Link |
 | Resume or open | "继续这个会话", "resume this chat" | Session Resume/Open |
-| Find one session | "找上次讨论 migration 的会话" | Search, then `session show` |
+| Find one session | "找上次讨论 migration 的会话", "当前项目最新 grok 会话" | Latest/Find Session Lookup |
 | Review project history | "用 recall 审查这个项目", "历史风险" | Scoping Protocol + Analysis Modes |
 
 Treat "share" and "update/refresh share link" as the same action: sync the latest transcript, publish to Pages, return the live URL.
+
+## Project Scope Defaults
+
+Treat "current project", "this repo", and similar wording as a repository identity request, not necessarily the current filesystem path. `recall --project` filters by exact session directory plus child paths only; it does not understand repo names, remotes, symlinks, or gmc worktrees.
+
+Default scoping rules:
+
+- If the user explicitly says global, all projects, or no project filter, do not scope by project.
+- If the user gives an exact path, use that path with `--project`.
+- If the request is about the current checkout only, use `git rev-parse --show-toplevel` with `--project`.
+- If the request is about the current project/repo and may include other worktrees, derive repo identity first:
+  - `git rev-parse --show-toplevel`
+  - `git remote get-url origin`
+  - repo slug such as `owner/repo` and repo name such as `repo`
+- For repo-identity lookups, do not rely on `--project <current path>` alone. List a bounded recent candidate set with source/time filters, parse JSON structurally, and keep sessions whose project directory belongs to the same repo identity. Prefer matching candidates by running `git -C <session.project> remote get-url origin` when that directory still exists; fall back to exact repo-name basename matches only when the directory is unavailable.
+- When reporting results from repo-identity filtering, say which project directories were included so path/worktree ambiguity is visible.
+
+## Latest/Find Session Lookup
+
+Use this workflow for one-shot requests such as "latest Grok session for this project" or "find the last session about X". Do not run the broad project-review scoping flow.
+
+1. Determine source, recency, and project scope from the user wording.
+2. If a single exact directory scope is intended, use:
+   ```bash
+   recall session list --project /absolute/project/path --source <source> --limit 20 --sort updated --sync --format json
+   ```
+3. If repo identity scope is intended, especially in gmc or alternate worktrees, use a bounded unscoped candidate list and filter structurally by repo identity:
+   ```bash
+   recall session list --source <source> --limit 100 --sort updated --sync --format json
+   ```
+   Increase the limit or add `--time 30d` only when needed. Do not pick the first global result without checking the session's `project`.
+4. For a named or older session, add `--query "<keywords>"` and/or `--time 7d`, but keep the same project-scope rules.
+5. Show the selected session with:
+   ```bash
+   recall session show --id <recall-session-id> --format json --include metadata,messages,usage,events
+   ```
 
 ## Publish Or Refresh Share Link
 
@@ -122,7 +158,7 @@ If the user asks for "deep", "full", "comprehensive", or "analyze history", use 
 ## Workflow
 
 1. Identify the project scope and analysis mode.
-   - Prefer the current repository's absolute path for `--project`.
+   - Apply Project Scope Defaults before choosing `--project`; repo identity may span multiple worktree paths.
    - `--project` matches that directory and child paths; it does not match sibling prefixes.
    - Ask at most one scoping question for broad requests.
    - State the default analysis mode when proceeding without a question.
