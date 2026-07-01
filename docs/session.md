@@ -63,6 +63,7 @@ keystrokes, parse terminal UI output, and hope the focused row did not change.
 
 - Remote auth or private access control for shared pages.
 - Remote share revocation or deployment cleanup.
+- Share provider abstraction beyond the current Cloudflare Pages target.
 - Editing source-tool session data.
 - Deleting local Recall sessions in the first release.
 - Replacing the TUI.
@@ -210,6 +211,7 @@ recall session share --source codex --source-id <source-id> --format json
 recall session share --id <id> --dry-run
 recall session share --id <id> --open
 recall session share --id <id> --copy-url
+recall session share --id <id> --tldr-file /tmp/recall-tldr.md --format json
 ```
 
 Options:
@@ -220,12 +222,23 @@ Options:
   not deploy.
 - `--open`: open the resulting URL in the default browser.
 - `--copy-url`: copy the resulting URL to the system clipboard.
+- `--tldr-file <path>`: render this markdown file as the TL;DR block at the
+  top of the shared page. Missing, unreadable, or blank files are skipped.
 - `--format <text|json>`: default `text`.
 
 Behavior:
 
 - Requires existing `recall share init` configuration.
-- Uses the same Cloudflare Pages renderer and deployment path as the TUI.
+- Uses the same Cloudflare Pages renderer and deployment path as the TUI. The
+  supported provider is Cloudflare Pages on `pages.dev`.
+- Writes one static HTML file to the configured publish directory and deploys
+  that directory with Wrangler.
+- Re-publishing the same source session overwrites the same deterministic route.
+- Renders a TL;DR block above the transcript only when a readable non-blank
+  `--tldr-file` is supplied.
+- TUI shares do not pass `--tldr-file`, so they keep the plain transcript page.
+- The page shows readable user and assistant messages, collapses tool calls and
+  tool results by default, and must not show local filesystem paths.
 - Returns a deterministic URL for the selected source session.
 - Uses the actual `project_domain` stored or resolved from Cloudflare Pages
   project metadata; it must not guess `project_name.pages.dev` when the domain
@@ -337,6 +350,10 @@ Example JSON error:
 ## Privacy And Safety
 
 - Sharing remains public to anyone with the URL.
+- Recall sets no-index headers and robots rules for shared pages, but this is
+  not access control.
+- Auth is not supported now; if needed later, it belongs in a separate
+  Cloudflare-backed design.
 - `session share` must not add automatic confirmation prompts; coding agents
   should ask the user before invoking it.
 - `session show` should preserve Recall's existing sanitization behavior for

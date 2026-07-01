@@ -94,6 +94,8 @@ pub(crate) enum SessionCommands {
         open: bool,
         #[arg(long, help = "Copy the resulting URL to clipboard")]
         copy_url: bool,
+        #[arg(long, help = "Markdown file to render as the share page TL;DR")]
+        tldr_file: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = SessionActionFormat::Text)]
         format: SessionActionFormat,
     },
@@ -249,17 +251,25 @@ pub(crate) fn cmd_session(command: SessionCommands) -> Result<()> {
                 output,
             )
         }
-        SessionCommands::Share { id, source, source_id, dry_run, open, copy_url, format } => {
-            cmd_session_share(
-                id.as_deref(),
-                source.as_deref(),
-                source_id.as_deref(),
-                dry_run,
-                open,
-                copy_url,
-                format,
-            )
-        }
+        SessionCommands::Share {
+            id,
+            source,
+            source_id,
+            dry_run,
+            open,
+            copy_url,
+            tldr_file,
+            format,
+        } => cmd_session_share(
+            id.as_deref(),
+            source.as_deref(),
+            source_id.as_deref(),
+            dry_run,
+            open,
+            copy_url,
+            tldr_file.as_deref(),
+            format,
+        ),
         SessionCommands::Resume { id, source, source_id, print_command, format } => {
             cmd_session_command(
                 id.as_deref(),
@@ -506,6 +516,7 @@ fn cmd_session_export(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_session_share(
     id: Option<&str>,
     source_filter: Option<&str>,
@@ -513,6 +524,7 @@ fn cmd_session_share(
     dry_run: bool,
     open: bool,
     copy_url: bool,
+    tldr_file: Option<&Path>,
     format: SessionActionFormat,
 ) -> Result<()> {
     let store = Store::open()?;
@@ -521,12 +533,26 @@ fn cmd_session_share(
     let messages = store.get_messages(&session.id)?;
     let usage_events = store.list_usage_events_for_session(&session.id)?;
     let config = AppConfig::load_or_default();
-    let preview = recall::share::preview_session(&config, &session, &messages, &usage_events)?;
+    let tldr_markdown = tldr_file.and_then(read_tldr_file);
+    let render_options = recall::share::ShareRenderOptions { tldr_markdown };
+    let preview = recall::share::preview_session_with_options(
+        &config,
+        &session,
+        &messages,
+        &usage_events,
+        &render_options,
+    )?;
     let url = if dry_run {
         preview.url.clone()
     } else {
         eprintln!("Sharing session {}...", session.id);
-        recall::share::publish_session(&config, &session, &messages, &usage_events)?
+        recall::share::publish_session_with_options(
+            &config,
+            &session,
+            &messages,
+            &usage_events,
+            &render_options,
+        )?
     };
 
     if copy_url {
@@ -928,6 +954,19 @@ fn copy_to_clipboard(text: &str) -> Result<()> {
     Ok(())
 }
 
+fn read_tldr_file(path: &Path) -> Option<String> {
+    match fs::read_to_string(path) {
+        Ok(content) => {
+            let trimmed = content.trim();
+            if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+        }
+        Err(err) => {
+            eprintln!("Warning: skipping TL;DR file {}: {err}", path.display());
+            None
+        }
+    }
+}
+
 fn open_url(url: &str) -> Result<()> {
     let (program, args): (&str, Vec<&str>) = if cfg!(target_os = "macos") {
         ("open", vec![url])
@@ -962,5 +1001,25 @@ mod tests {
             .into_owned();
 
         assert_eq!(handoff_working_directory(Some(directory.as_str())), None);
+    }
+
+    #[test]
+    fn read_tldr_file_skips_missing_file() {
+        let path = std::env::temp_dir().join(format!("recall-missing-{}.md", uuid::Uuid::new_v4()));
+
+        assert_eq!(read_tldr_file(&path), None);
+    }
+
+    #[test]
+    fn read_tldr_file_trims_blank_and_content() {
+        let path = std::env::temp_dir().join(format!("recall-tldr-{}.md", uuid::Uuid::new_v4()));
+        fs::write(&path, "  **Summary**  \n").unwrap();
+
+        assert_eq!(read_tldr_file(&path).as_deref(), Some("**Summary**"));
+
+        fs::write(&path, " \n\t").unwrap();
+        assert_eq!(read_tldr_file(&path), None);
+
+        let _ = fs::remove_file(path);
     }
 }

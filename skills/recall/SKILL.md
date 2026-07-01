@@ -100,6 +100,17 @@ When the user wants to share a session or update an existing share link, execute
    Progress text goes to stderr; read the URL from stdout JSON at `share.url`.
    Add `--copy-url` when they ask to copy it; add `--open` when they ask to open it.
 
+   Before publishing, write a short TL;DR markdown file from the current agent
+   context and pass it with `--tldr-file`. Weight the user's request highest,
+   weight the final outcome next, and use trace/process details only as
+   low-weight context:
+   ```bash
+   # Agent writes /tmp/recall-tldr.md from the current conversation context.
+   recall session share --id <recall-session-id> --tldr-file /tmp/recall-tldr.md --format json
+   ```
+   If the TL;DR file is missing, unreadable, or blank, Recall skips the TL;DR
+   block and still publishes the session.
+
 4. Reply in this shape:
    ```text
    <url>
@@ -229,6 +240,7 @@ recall session list --project /absolute/project/path --limit 20 --format json
 recall session show --id <session-id> --format json --include metadata,messages,usage,events
 recall session export --id <session-id> --format jsonl
 recall session share --id <session-id> --format json
+recall session share --id <session-id> --tldr-file /tmp/recall-tldr.md --format json
 recall session share --id <session-id> --dry-run --format json  # preview only; never use for share/update requests
 recall session resume --id <session-id> --print-command
 recall import recall-export.jsonl --dry-run

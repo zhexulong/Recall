@@ -30,6 +30,11 @@ pub struct SharePreview {
     pub html_bytes: usize,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ShareRenderOptions {
+    pub tldr_markdown: Option<String>,
+}
+
 const SESSION_PAGE_CSS: &str = r#"
 :root{
   --page-bg:#FAF9F6;--surface:#FFFFFF;--user-surface:#FFFFFF;
@@ -59,6 +64,14 @@ body{margin:0;background:var(--page-bg);color:var(--text-primary);font:16px/1.6 
 .layout{display:grid;grid-template-columns:minmax(0,var(--read-width)) 212px;grid-template-areas:"page toc";justify-content:center;gap:64px;max-width:var(--layout-width);margin:0 auto;padding:40px 32px 28px}
 .page{grid-area:page;min-width:0}
 .document{min-width:0}
+
+.tldr{margin:0 0 34px;padding:17px 19px 18px;border:1px solid var(--rule-strong);border-left:3px solid var(--accent);border-radius:8px;background:var(--surface);box-shadow:0 1px 2px rgba(35,33,28,.04)}
+.tldr-title{margin:0 0 10px;font:600 12px/1 var(--font-sans);letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.tldr .prose{font:15.5px/1.62 var(--font-sans);color:var(--text-primary)}
+.tldr .prose p{margin-bottom:.6em}
+.tldr .prose strong{color:var(--text-primary)}
+.tldr .prose ul,.tldr .prose ol{margin-bottom:.6em}
+.tldr .prose li{margin-bottom:.25em}
 
 .user-toc{grid-area:toc;position:sticky;top:50vh;transform:translateY(-50%);align-self:start;max-height:80vh;display:flex;flex-direction:column;align-items:flex-end;gap:4px;padding:4px 0;z-index:5}
 .user-toc-title{margin:0 3px 4px 0;font:600 10px/1 var(--font-sans);letter-spacing:.12em;text-transform:uppercase;color:var(--text-tertiary);opacity:0;transform:translateX(4px);transition:opacity .16s ease,transform .16s ease}
@@ -332,7 +345,23 @@ pub fn preview_session(
     messages: &[Message],
     usage_events: &[SessionUsageEventRecord],
 ) -> Result<SharePreview> {
-    let (preview, _) = build_publish_preview(config, session, messages, usage_events)?;
+    preview_session_with_options(
+        config,
+        session,
+        messages,
+        usage_events,
+        &ShareRenderOptions::default(),
+    )
+}
+
+pub fn preview_session_with_options(
+    config: &AppConfig,
+    session: &Session,
+    messages: &[Message],
+    usage_events: &[SessionUsageEventRecord],
+    options: &ShareRenderOptions,
+) -> Result<SharePreview> {
+    let (preview, _) = build_publish_preview(config, session, messages, usage_events, options)?;
     Ok(preview)
 }
 
@@ -342,7 +371,23 @@ pub fn publish_session(
     messages: &[Message],
     usage_events: &[SessionUsageEventRecord],
 ) -> Result<String> {
-    let (preview, html) = build_publish_preview(config, session, messages, usage_events)?;
+    publish_session_with_options(
+        config,
+        session,
+        messages,
+        usage_events,
+        &ShareRenderOptions::default(),
+    )
+}
+
+pub fn publish_session_with_options(
+    config: &AppConfig,
+    session: &Session,
+    messages: &[Message],
+    usage_events: &[SessionUsageEventRecord],
+    options: &ShareRenderOptions,
+) -> Result<String> {
+    let (preview, html) = build_publish_preview(config, session, messages, usage_events, options)?;
 
     init_publish_dir(&preview.publish_dir)?;
 
@@ -358,6 +403,7 @@ fn build_publish_preview(
     session: &Session,
     messages: &[Message],
     usage_events: &[SessionUsageEventRecord],
+    options: &ShareRenderOptions,
 ) -> Result<(SharePreview, String)> {
     let share = config
         .share
@@ -373,7 +419,8 @@ fn build_publish_preview(
 
     let share_id = share_id_for_session(session);
     let display_meta = collect_session_display_meta(session, usage_events);
-    let html = render_session_html(session, messages, &display_meta);
+    let tldr = options.tldr_markdown.as_deref().map(str::trim).filter(|tldr| !tldr.is_empty());
+    let html = render_session_html_with_tldr(session, messages, &display_meta, tldr);
     if html.len() > MAX_PAGES_ASSET_BYTES {
         bail!("session page is larger than Cloudflare Pages' 25 MiB asset limit");
     }
@@ -429,6 +476,15 @@ pub fn render_session_html(
     messages: &[Message],
     display_meta: &SessionDisplayMeta,
 ) -> String {
+    render_session_html_with_tldr(session, messages, display_meta, None)
+}
+
+fn render_session_html_with_tldr(
+    session: &Session,
+    messages: &[Message],
+    display_meta: &SessionDisplayMeta,
+    tldr_markdown: Option<&str>,
+) -> String {
     let title = session.custom_title.as_deref().unwrap_or(&session.title);
     let display_title = display_title(title);
     let blocks = prepare_render_blocks(messages);
@@ -458,6 +514,9 @@ pub fn render_session_html(
     append_header_display_meta(&mut out, display_meta);
     out.push_str("</div></div></header>");
     out.push_str("<div class=\"layout\"><div class=\"page\"><article class=\"document\">");
+    if let Some(tldr) = tldr_markdown.filter(|tldr| !tldr.trim().is_empty()) {
+        render_tldr_html(&mut out, tldr);
+    }
     if blocks.is_empty() {
         out.push_str("<p class=\"empty\">No messages in this session.</p>");
     } else {
@@ -480,6 +539,13 @@ pub fn render_session_html(
     out.push_str(TOC_NAV_SCRIPT);
     out.push_str("</body></html>");
     out
+}
+
+fn render_tldr_html(out: &mut String, markdown: &str) {
+    out.push_str("<section class=\"tldr\" aria-labelledby=\"tldr-title\">");
+    out.push_str("<h2 id=\"tldr-title\" class=\"tldr-title\">TL;DR</h2>");
+    render_content(out, markdown);
+    out.push_str("</section>");
 }
 
 enum RenderBlock {
@@ -1496,6 +1562,30 @@ mod tests {
     fn html_renderer_omits_local_directory() {
         let html = render_html(&session("s1"), &[]);
         assert!(!html.contains("/tmp/project"));
+    }
+
+    #[test]
+    fn html_renderer_places_tldr_before_transcript_and_escapes_it() {
+        let html = render_session_html_with_tldr(
+            &session("s1"),
+            &[Message {
+                session_id: "local-id".to_string(),
+                role: Role::User,
+                content: "First question".to_string(),
+                timestamp: None,
+                seq: 0,
+            }],
+            &SessionDisplayMeta::default(),
+            Some("**Query:** <script>alert('x')</script>"),
+        );
+
+        let tldr = html.find("class=\"tldr\"").unwrap();
+        let first_turn = html.find("class=\"turn user\"").unwrap();
+        assert!(tldr < first_turn);
+        assert!(html.contains("TL;DR"));
+        assert!(html.contains("&lt;script&gt;alert("));
+        assert!(html.contains("&lt;/script&gt;"));
+        assert!(!html.contains("<script>alert"));
     }
 
     #[test]
