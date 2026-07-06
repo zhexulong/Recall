@@ -1552,3 +1552,100 @@ fn reflect_excludes_low_level_transcript_logs_by_default() {
     assert!(!text.contains("<command-message>"), "text output must exclude command envelope");
     assert!(!text.contains("<local-command-stdout>"), "text output must exclude stdout envelope");
 }
+
+#[test]
+fn reflect_sanitizes_inline_tool_artifacts() {
+    use recall::db::search::TimeRange;
+    use recall::reflect;
+
+    let store = setup();
+
+    let session = make_session_at("s1", "opencode", "raw1", "Inline artifacts session", 1000);
+    store.insert_session(&session).unwrap();
+
+    let msgs = vec![
+        // --- inline tool artifact: should survive STRIPPED ---
+        make_message_at(
+            "s1",
+            Role::Assistant,
+            "I'll review the docs. [Read] {\"file_path\":\"docs/reflect.md\"}",
+            0,
+            1100,
+        ),
+        // --- tool-use rejection: should be EXCLUDED ---
+        make_message_at(
+            "s1",
+            Role::User,
+            "The user doesn't want to proceed with this tool use...",
+            1,
+            1200,
+        ),
+        // --- request interruption: should be EXCLUDED ---
+        make_message_at("s1", Role::User, "[Request interrupted by user for tool use]", 2, 1300),
+        // --- line-numbered file dump: should be EXCLUDED ---
+        make_message_at("s1", Role::User, "1 # Heading 2 3 content from file", 3, 1400),
+        // --- normal prose mentioning tool words: should survive ---
+        make_message_at("s1", Role::Assistant, "I ran a bash script to read the file", 4, 1500),
+        // --- normal user message: should survive ---
+        make_message_at("s1", Role::User, "Please check the output", 5, 1600),
+    ];
+    store.insert_messages(&msgs).unwrap();
+
+    let filters = reflect::ReflectFilters {
+        sources: None,
+        time_range: TimeRange::All,
+        directory: None,
+        repo: None,
+    };
+    let report = reflect::build_reflect_report(&store, &filters).unwrap();
+
+    let phase = &report.phases[0];
+    let surviving_summaries: Vec<&str> = phase.moments.iter().map(|m| m.summary.as_str()).collect();
+
+    assert_eq!(
+        surviving_summaries.len(),
+        3,
+        "expected 3 conversation moments (1 sanitized + 2 normal), got {}: {:?}",
+        surviving_summaries.len(),
+        surviving_summaries
+    );
+
+    // Inline tool message should survive but be stripped
+    let sanitized = surviving_summaries
+        .iter()
+        .find(|s| s.contains("review the docs"))
+        .expect("sanitized inline-tool message must survive");
+    assert!(!sanitized.contains("[Read]"), "inline [Read] must be stripped: {sanitized}");
+    assert!(!sanitized.contains("file_path"), "JSON payload must be stripped: {sanitized}");
+    assert!(!sanitized.contains("{\""), "JSON must be stripped: {sanitized}");
+
+    // Tool-use rejection must NOT appear
+    for summary in &surviving_summaries {
+        assert!(
+            !summary.contains("doesn't want to proceed"),
+            "tool-use rejection leaked: {summary}"
+        );
+        assert!(!summary.contains("Request interrupted"), "request interruption leaked: {summary}");
+        assert!(!summary.starts_with("1 #"), "line-numbered file dump leaked: {summary}");
+    }
+
+    // Normal prose must appear
+    assert!(
+        surviving_summaries.iter().any(|s| s.contains("bash script")),
+        "prose mentioning tool words must survive: {:?}",
+        surviving_summaries
+    );
+    assert!(
+        surviving_summaries.iter().any(|s| s.contains("check the output")),
+        "normal user message must survive: {:?}",
+        surviving_summaries
+    );
+
+    // Text output must also be clean
+    let text = reflect::render_text(&report);
+    assert!(!text.contains("[Read]"), "text output must exclude inline tool log");
+    assert!(!text.contains("file_path"), "text output must exclude JSON payload");
+    assert!(!text.contains("doesn't want to proceed"), "text output must exclude rejection");
+    assert!(!text.contains("Request interrupted"), "text output must exclude interruption");
+    assert!(text.contains("review the docs"), "text output must include sanitized prose");
+}

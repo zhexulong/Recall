@@ -135,11 +135,11 @@ pub fn build_reflect_report(store: &Store, filters: &ReflectFilters) -> Result<R
             let role_str = msg.role.as_str().to_string();
             let timestamp = msg.timestamp.unwrap_or(session.started_at + i64::from(msg.seq));
 
-            if is_low_level_transcript_log(&msg.content) {
+            let Some(cleaned) = sanitize_conversation_content(&msg.content) else {
                 continue;
-            }
+            };
 
-            let summary = compact_content(&msg.content, 180);
+            let summary = compact_content(&cleaned, 180);
 
             moments.push(TimelineMoment {
                 id: format!("{}:{}", session.id, msg.seq),
@@ -312,7 +312,81 @@ fn is_low_level_transcript_log(content: &str) -> bool {
         return true;
     }
 
+    if content.starts_with("The user doesn't want to proceed with this tool use") {
+        return true;
+    }
+
+    if content.starts_with("[Request interrupted by user for tool use]") {
+        return true;
+    }
+
+    if is_line_numbered_file_dump(content) {
+        return true;
+    }
+
     false
+}
+
+fn is_line_numbered_file_dump(content: &str) -> bool {
+    let trimmed = content.trim_start();
+    let bytes = trimmed.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    let first = bytes[0];
+    if !first.is_ascii_digit() {
+        return false;
+    }
+    for i in 1..bytes.len().min(6) {
+        let b = bytes[i];
+        if b == b'#' || (b.is_ascii_whitespace() && i + 1 < bytes.len() && bytes[i + 1] == b'#') {
+            return true;
+        }
+        if !b.is_ascii_digit() && !b.is_ascii_whitespace() {
+            break;
+        }
+    }
+    false
+}
+
+fn sanitize_conversation_content(content: &str) -> Option<String> {
+    if is_low_level_transcript_log(content) {
+        return None;
+    }
+
+    let tool_names = [
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "Grep",
+        "Glob",
+        "LS",
+        "TodoWrite",
+        "Task",
+        "WebFetch",
+        "WebSearch",
+    ];
+
+    let mut cut_pos = content.len();
+    for name in &tool_names {
+        let marker = format!("[{}]", name);
+        if let Some(pos) = content.find(&marker) {
+            if pos > 0 && pos < cut_pos {
+                cut_pos = pos;
+            }
+        }
+    }
+
+    if cut_pos < content.len() {
+        let sanitized = content[..cut_pos].trim_end();
+        if sanitized.is_empty() {
+            return None;
+        }
+        return Some(sanitized.to_string());
+    }
+
+    Some(content.to_string())
 }
 
 pub fn render_text(report: &ReflectReport) -> String {
