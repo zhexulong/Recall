@@ -8,6 +8,7 @@ pub mod handoff;
 pub mod import;
 pub mod info;
 pub mod query;
+pub mod reflect;
 pub mod repo_identity;
 pub mod semantic;
 pub mod session_action;

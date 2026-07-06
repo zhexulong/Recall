@@ -1165,3 +1165,24 @@ fn config_drops_obsolete_disabled_entries() {
     assert!(!config.disabled_sources.iter().any(|id| id == "ghost-adapter"));
     assert!(config.is_source_enabled("claude-code"), "cleared to avoid zero-source state");
 }
+
+#[test]
+fn reflect_empty_scope_returns_coverage_note() {
+    use recall::db::search::TimeRange;
+
+    let store = setup();
+    let filters = recall::reflect::ReflectFilters {
+        sources: None,
+        time_range: TimeRange::All,
+        directory: None,
+        repo: None,
+    };
+    let report = recall::reflect::build_reflect_report(&store, &filters).unwrap();
+
+    assert_eq!(report.coverage_note.as_deref(), Some("No sessions matched the reflect scope."),);
+    assert_eq!(report.summary.sessions, 0);
+    assert!(report.moments.is_empty());
+    assert!(report.phases.is_empty());
+    assert!(report.observed_patterns.is_empty());
+    assert!(report.proposals.is_empty());
+}
