@@ -106,12 +106,78 @@ pub fn build_reflect_report(store: &Store, filters: &ReflectFilters) -> Result<R
         });
     }
 
+    let mut moments: Vec<TimelineMoment> = Vec::new();
+
+    for session in &sessions {
+        let messages = store.get_messages(&session.id)?;
+        for msg in &messages {
+            let role_str = msg.role.as_str().to_string();
+            let timestamp = msg.timestamp.unwrap_or(session.started_at + i64::from(msg.seq));
+            let summary = compact_content(&msg.content, 180);
+
+            moments.push(TimelineMoment {
+                id: format!("{}:{}", session.id, msg.seq),
+                timestamp,
+                source: session.source.clone(),
+                session_id: session.id.clone(),
+                session_title: session.title.clone(),
+                role: role_str,
+                summary,
+            });
+        }
+    }
+
+    moments.sort_by(|a, b| {
+        a.timestamp
+            .cmp(&b.timestamp)
+            .then_with(|| a.session_id.cmp(&b.session_id))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+
+    let timeline_moments_count = moments.len();
+    let mut phases = Vec::new();
+
+    if !moments.is_empty() {
+        let start_at = moments.first().map(|m| m.timestamp).unwrap_or(0);
+        let end_at = moments.last().map(|m| m.timestamp).unwrap_or(0);
+        let session_ids: std::collections::HashSet<&str> =
+            moments.iter().map(|m| m.session_id.as_str()).collect();
+
+        phases.push(TimelinePhase {
+            id: "phase-1".to_string(),
+            title: "Project conversation timeline".to_string(),
+            start_at,
+            end_at,
+            summary: format!(
+                "{} conversation moments across {} sessions.",
+                timeline_moments_count,
+                session_ids.len()
+            ),
+            moments,
+        });
+    }
+
     Ok(ReflectReport {
         scope,
-        summary: ReflectSummary { sessions: sessions.len(), timeline_moments: 0, phases: 0 },
-        phases: Vec::new(),
+        summary: ReflectSummary {
+            sessions: sessions.len(),
+            timeline_moments: timeline_moments_count,
+            phases: phases.len(),
+        },
+        phases,
         observed_patterns: Vec::new(),
         proposals: Vec::new(),
         coverage_note: None,
     })
+}
+
+fn compact_content(content: &str, max_chars: usize) -> String {
+    let collapsed: String = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.len() <= max_chars {
+        collapsed
+    } else {
+        let mut truncated: String = collapsed.chars().take(max_chars).collect();
+        truncated.push_str("...");
+        truncated
+    }
 }

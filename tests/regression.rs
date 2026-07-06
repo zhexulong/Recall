@@ -1187,3 +1187,108 @@ fn reflect_empty_scope_returns_coverage_note() {
     assert!(report.observed_patterns.is_empty());
     assert!(report.proposals.is_empty());
 }
+
+fn make_session_at(
+    id: &str,
+    source: &str,
+    source_id: &str,
+    title: &str,
+    started_at: i64,
+) -> Session {
+    let mut session = make_session(id, source, source_id, title);
+    session.started_at = started_at;
+    session.directory = Some("/tmp/reflect-repo".to_string());
+    session
+}
+
+fn make_message_at(
+    session_id: &str,
+    role: Role,
+    content: &str,
+    seq: u32,
+    timestamp: i64,
+) -> Message {
+    Message {
+        session_id: session_id.to_string(),
+        role,
+        content: content.to_string(),
+        timestamp: Some(timestamp),
+        seq,
+    }
+}
+
+#[test]
+fn reflect_builds_timeline_across_sessions() {
+    use recall::db::search::TimeRange;
+
+    let store = setup();
+
+    let session1 = make_session_at("s1", "codex", "raw1", "Codex session", 1000);
+    let session2 = make_session_at("s2", "opencode", "raw2", "OpenCode session", 500);
+
+    store.insert_session(&session1).unwrap();
+    store.insert_session(&session2).unwrap();
+
+    let msgs1 = vec![
+        make_message_at("s1", Role::User, "hello", 0, 1000),
+        make_message_at("s1", Role::Assistant, "hi there", 1, 1100),
+    ];
+    let msgs2 = vec![
+        make_message_at("s2", Role::User, "how fix parser", 0, 600),
+        make_message_at("s2", Role::Assistant, "check imports", 1, 700),
+    ];
+    store.insert_messages(&msgs1).unwrap();
+    store.insert_messages(&msgs2).unwrap();
+
+    let filters = recall::reflect::ReflectFilters {
+        sources: None,
+        time_range: TimeRange::All,
+        directory: None,
+        repo: None,
+    };
+    let report = recall::reflect::build_reflect_report(&store, &filters).unwrap();
+
+    assert_eq!(report.summary.sessions, 2);
+    assert_eq!(report.summary.timeline_moments, 4);
+    assert_eq!(report.summary.phases, 1);
+    assert_eq!(report.phases.len(), 1, "should have one timeline phase");
+
+    let phase = &report.phases[0];
+    assert_eq!(phase.id, "phase-1");
+    assert_eq!(phase.title, "Project conversation timeline");
+    assert_eq!(phase.moments.len(), 4);
+
+    // Moments sorted by timestamp ascending
+    assert_eq!(phase.moments[0].id, "s2:0");
+    assert_eq!(phase.moments[0].timestamp, 600);
+    assert_eq!(phase.moments[0].role, "user");
+    assert_eq!(phase.moments[0].session_id, "s2");
+    assert_eq!(phase.moments[0].source, "opencode");
+    assert_eq!(phase.moments[0].session_title, "OpenCode session");
+
+    assert_eq!(phase.moments[1].id, "s2:1");
+    assert_eq!(phase.moments[1].timestamp, 700);
+    assert_eq!(phase.moments[1].role, "assistant");
+
+    assert_eq!(phase.moments[2].id, "s1:0");
+    assert_eq!(phase.moments[2].timestamp, 1000);
+
+    assert_eq!(phase.moments[3].id, "s1:1");
+    assert_eq!(phase.moments[3].timestamp, 1100);
+
+    // Verify summary fields on moments
+    for moment in &phase.moments {
+        assert!(!moment.summary.is_empty(), "moment {} should have summary", moment.id);
+    }
+
+    // Phase start/end should match first/last moments
+    assert_eq!(phase.start_at, 600);
+    assert_eq!(phase.end_at, 1100);
+    assert!(phase.summary.contains("conversation moments"));
+    assert!(phase.summary.contains("2 sessions"));
+
+    // Observed patterns / proposals should still be empty (Task 3/5)
+    assert!(report.observed_patterns.is_empty());
+    assert!(report.proposals.is_empty());
+    assert!(report.coverage_note.is_none());
+}
