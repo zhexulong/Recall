@@ -1,10 +1,15 @@
 use std::collections::BTreeMap;
+use std::fmt::Write;
 
 use anyhow::Result;
+use clap::ValueEnum;
 use serde::Serialize;
 
+use crate::adapters;
 use crate::db::search::{RepoFilter, TimeRange};
 use crate::db::store::{SessionListSort, Store};
+use crate::query::{parse_time_range, resolve_source_filter};
+use crate::utils;
 
 pub const REFLECT_CHUNK_MOMENT_LIMIT: usize = 10;
 
@@ -16,7 +21,7 @@ pub struct ReflectFilters {
     pub repo: Option<RepoFilter>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, ValueEnum)]
 pub enum ReflectFormat {
     Text,
     Json,
@@ -258,4 +263,99 @@ fn compact_content(content: &str, max_chars: usize) -> String {
         truncated.push_str("...");
         truncated
     }
+}
+
+pub fn render_text(report: &ReflectReport) -> String {
+    let mut out = String::new();
+
+    let _ = writeln!(out, "Recall reflect");
+    let _ = writeln!(out);
+
+    let _ = writeln!(out, "Scope");
+    let _ = writeln!(out, "  Project: {}", report.scope.project.as_deref().unwrap_or("-"));
+    let _ = writeln!(out, "  Repo: {}", report.scope.repo.as_deref().unwrap_or("-"));
+    let _ = writeln!(out, "  Time: {}", report.scope.time_range);
+    if !report.scope.sources.is_empty() {
+        let _ = writeln!(out, "  Sources: {}", report.scope.sources.join(", "));
+    }
+    let _ = writeln!(out);
+
+    let _ = writeln!(out, "Summary");
+    let _ = writeln!(out, "  Sessions: {}", report.summary.sessions);
+    let _ = writeln!(out, "  Moments: {}", report.summary.timeline_moments);
+    let _ = writeln!(out, "  Phases: {}", report.summary.phases);
+    let _ = writeln!(out);
+
+    if let Some(note) = &report.coverage_note {
+        let _ = writeln!(out, "Note: {note}");
+        let _ = writeln!(out);
+        return out;
+    }
+
+    for phase in &report.phases {
+        let _ = writeln!(out, "Timeline: {}", phase.title);
+        let _ = writeln!(out, "  {}", phase.summary);
+        let _ = writeln!(out);
+
+        let max_moments = REFLECT_CHUNK_MOMENT_LIMIT;
+        for moment in phase.moments.iter().take(max_moments) {
+            let time = utils::format_message_time(Some(moment.timestamp));
+            let _ = writeln!(
+                out,
+                "  [{time}] [{role}] [{source}] {title}: {summary}",
+                time = time,
+                role = moment.role,
+                source = moment.source,
+                title = moment.session_title,
+                summary = moment.summary,
+            );
+        }
+        if phase.moments.len() > max_moments {
+            let _ = writeln!(out, "  ... and {} more moments", phase.moments.len() - max_moments);
+        }
+        let _ = writeln!(out);
+    }
+
+    if !report.observed_patterns.is_empty() {
+        let _ = writeln!(out, "Discussion Prompts");
+        for pattern in &report.observed_patterns {
+            let _ = writeln!(out, "  - {}", pattern.discussion_prompt);
+        }
+        let _ = writeln!(out);
+    }
+
+    out
+}
+
+pub fn run_cli(
+    format: ReflectFormat,
+    source_filter: Option<&str>,
+    time_filter: Option<&str>,
+    project_filter: Option<&str>,
+    repo_filter: Option<&str>,
+    sync: bool,
+) -> Result<()> {
+    if sync {
+        crate::sync::run_cli(false, false, source_filter)?;
+    }
+
+    let store = Store::open()?;
+    let sources = adapters::source_labels();
+    let resolved_sources = resolve_source_filter(source_filter, &sources)?;
+    let time_range = parse_time_range(time_filter);
+    let (directory, repo) = store.resolve_project_repo_filters(project_filter, repo_filter)?;
+
+    let filters = ReflectFilters { sources: resolved_sources, time_range, directory, repo };
+    let report = build_reflect_report(&store, &filters)?;
+
+    match format {
+        ReflectFormat::Text => {
+            print!("{}", render_text(&report));
+        }
+        ReflectFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+    }
+
+    Ok(())
 }

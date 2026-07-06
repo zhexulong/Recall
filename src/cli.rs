@@ -101,6 +101,21 @@ enum Commands {
         #[command(subcommand)]
         command: SkillCommands,
     },
+    #[command(about = "Reflect on past sessions with timeline and discussion prompts")]
+    Reflect {
+        #[arg(long, default_value = "text", help = "Output format: text or json")]
+        format: recall::reflect::ReflectFormat,
+        #[arg(long, help = "Filter by source id or label")]
+        source: Option<String>,
+        #[arg(long, help = "Filter by time range")]
+        time: Option<String>,
+        #[arg(long, help = "Filter by project directory, including child paths")]
+        project: Option<String>,
+        #[arg(long, help = "Filter by repository identity")]
+        repo: Option<String>,
+        #[arg(long, help = "Sync sources before building report")]
+        sync: bool,
+    },
     #[command(about = "Operate on indexed sessions")]
     Session {
         #[command(subcommand)]
@@ -177,6 +192,16 @@ pub fn run() -> Result<()> {
             limit,
         )?,
         Some(Commands::Import { file, dry_run }) => recall::import::run_cli(&file, dry_run)?,
+        Some(Commands::Reflect { format, source, time, project, repo, sync }) => {
+            recall::reflect::run_cli(
+                format,
+                source.as_deref(),
+                time.as_deref(),
+                project.as_deref(),
+                repo.as_deref(),
+                sync,
+            )?
+        }
         Some(Commands::Share { command: ShareCommands::Init { project_name, publish_dir } }) => {
             recall::share_init::run(project_name, publish_dir)?
         }

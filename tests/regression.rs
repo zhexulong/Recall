@@ -1389,3 +1389,44 @@ fn reflect_scope_pattern_is_discussion_prompt_only() {
 
     assert!(report.proposals.is_empty(), "proposals must remain empty");
 }
+
+#[test]
+fn reflect_text_output_is_timeline_first() {
+    use recall::db::search::TimeRange;
+    use recall::reflect;
+
+    let store = setup();
+
+    let session = make_session_at("s1", "codex", "raw1", "Test session", 1000);
+    store.insert_session(&session).unwrap();
+
+    let msgs = vec![
+        make_message_at("s1", Role::User, "hello world", 0, 1100),
+        make_message_at("s1", Role::Assistant, "hi there", 1, 1200),
+    ];
+    store.insert_messages(&msgs).unwrap();
+
+    let filters = reflect::ReflectFilters {
+        sources: None,
+        time_range: TimeRange::All,
+        directory: None,
+        repo: None,
+    };
+    let report = reflect::build_reflect_report(&store, &filters).unwrap();
+
+    let text = reflect::render_text(&report);
+
+    // Must contain required section headers
+    assert!(text.contains("Recall reflect"), "output must contain 'Recall reflect' header");
+    assert!(text.contains("Scope"), "output must contain 'Scope' section");
+    assert!(text.contains("Summary"), "output must contain 'Summary' section");
+    assert!(text.contains("Timeline"), "output must contain 'Timeline' section");
+
+    // Must contain phase summary and moment content
+    assert!(text.contains("Project conversation timeline"), "must include phase title");
+    assert!(text.contains("hello world"), "must include moment content");
+    assert!(text.contains("hi there"), "must include assistant moment content");
+
+    // Must NOT contain raw event names
+    assert!(!text.contains("session_events"), "must not contain raw event name session_events");
+}
