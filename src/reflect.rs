@@ -371,10 +371,11 @@ fn sanitize_conversation_content(content: &str) -> Option<String> {
     let mut cut_pos = content.len();
     for name in &tool_names {
         let marker = format!("[{}]", name);
-        if let Some(pos) = content.find(&marker) {
-            if pos > 0 && pos < cut_pos {
-                cut_pos = pos;
-            }
+        if let Some(pos) = content.find(&marker)
+            && pos > 0
+            && pos < cut_pos
+        {
+            cut_pos = pos;
         }
     }
 
