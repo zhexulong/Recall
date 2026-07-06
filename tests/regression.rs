@@ -1430,3 +1430,125 @@ fn reflect_text_output_is_timeline_first() {
     // Must NOT contain raw event names
     assert!(!text.contains("session_events"), "must not contain raw event name session_events");
 }
+
+#[test]
+fn reflect_excludes_low_level_transcript_logs_by_default() {
+    use recall::db::search::TimeRange;
+    use recall::reflect;
+
+    let store = setup();
+
+    let session = make_session_at("s1", "opencode", "raw1", "Mixed session", 1000);
+    store.insert_session(&session).unwrap();
+
+    let msgs = vec![
+        // --- normal conversation (must appear) ---
+        make_message_at("s1", Role::User, "Please review the timeline design", 0, 1100),
+        make_message_at("s1", Role::Assistant, "I will review the design at a high level", 1, 1200),
+        // --- low-level tool/log messages (must NOT appear) ---
+        make_message_at("s1", Role::Assistant, "[Bash] {\"command\":\"git status\"}", 2, 1300),
+        make_message_at(
+            "s1",
+            Role::Assistant,
+            "[Read] {\"file_path\":\"docs/reflect.md\"}",
+            3,
+            1400,
+        ),
+        make_message_at("s1", Role::Assistant, "[Write] {\"file_path\":\"x\"}", 4, 1500),
+        make_message_at(
+            "s1",
+            Role::Assistant,
+            "<command-message>ui-ux-pro-max</command-message>",
+            5,
+            1600,
+        ),
+        make_message_at(
+            "s1",
+            Role::Assistant,
+            "<local-command-stdout>Copied to clipboard</local-command-stdout>",
+            6,
+            1700,
+        ),
+        make_message_at(
+            "s1",
+            Role::Assistant,
+            "The file /tmp/example.md has been updated successfully.",
+            7,
+            1800,
+        ),
+        make_message_at("s1", Role::Assistant, "(Bash completed with no output)", 8, 1900),
+        // --- normal prose that mentions tool words (must appear) ---
+        make_message_at(
+            "s1",
+            Role::Assistant,
+            "I ran a quick bash script to verify the read paths and write output.",
+            9,
+            2000,
+        ),
+    ];
+    store.insert_messages(&msgs).unwrap();
+
+    let filters = reflect::ReflectFilters {
+        sources: None,
+        time_range: TimeRange::All,
+        directory: None,
+        repo: None,
+    };
+    let report = reflect::build_reflect_report(&store, &filters).unwrap();
+
+    // Only 3 conversation moments should survive (messages 0, 1, 9)
+    let phase = &report.phases[0];
+    let surviving_summaries: Vec<&str> = phase.moments.iter().map(|m| m.summary.as_str()).collect();
+
+    assert_eq!(
+        surviving_summaries.len(),
+        3,
+        "expected 3 conversation moments, got {}: {:?}",
+        surviving_summaries.len(),
+        surviving_summaries
+    );
+
+    // Normal conversation must be present
+    assert!(
+        surviving_summaries.iter().any(|s| s.contains("review the timeline")),
+        "user message must appear: {:?}",
+        surviving_summaries
+    );
+    assert!(
+        surviving_summaries.iter().any(|s| s.contains("review the design")),
+        "assistant message must appear: {:?}",
+        surviving_summaries
+    );
+    assert!(
+        surviving_summaries.iter().any(|s| s.contains("bash script")),
+        "prose mentioning tool words must appear: {:?}",
+        surviving_summaries
+    );
+
+    // Low-level markers must NOT appear
+    for summary in &surviving_summaries {
+        assert!(!summary.starts_with("[Bash]"), "tool log prefix leaked: {summary}");
+        assert!(!summary.starts_with("[Read]"), "tool log prefix leaked: {summary}");
+        assert!(!summary.starts_with("[Write]"), "tool log prefix leaked: {summary}");
+        assert!(!summary.starts_with("<command-message>"), "command envelope leaked: {summary}");
+        assert!(
+            !summary.starts_with("<local-command-stdout>"),
+            "stdout envelope leaked: {summary}"
+        );
+        assert!(
+            !(summary.contains("The file") && summary.contains("has been updated successfully")),
+            "file update confirmation leaked: {summary}"
+        );
+        assert!(
+            !summary.starts_with("(Bash completed"),
+            "bash completion message leaked: {summary}"
+        );
+    }
+
+    // Text output must also be clean
+    let text = reflect::render_text(&report);
+    assert!(!text.contains("[Bash]"), "text output must exclude tool logs");
+    assert!(!text.contains("[Read]"), "text output must exclude tool logs");
+    assert!(!text.contains("<command-message>"), "text output must exclude command envelope");
+    assert!(!text.contains("<local-command-stdout>"), "text output must exclude stdout envelope");
+}

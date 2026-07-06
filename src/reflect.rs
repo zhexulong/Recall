@@ -134,6 +134,11 @@ pub fn build_reflect_report(store: &Store, filters: &ReflectFilters) -> Result<R
         for msg in &messages {
             let role_str = msg.role.as_str().to_string();
             let timestamp = msg.timestamp.unwrap_or(session.started_at + i64::from(msg.seq));
+
+            if is_low_level_transcript_log(&msg.content) {
+                continue;
+            }
+
             let summary = compact_content(&msg.content, 180);
 
             moments.push(TimelineMoment {
@@ -263,6 +268,51 @@ fn compact_content(content: &str, max_chars: usize) -> String {
         truncated.push_str("...");
         truncated
     }
+}
+
+fn is_low_level_transcript_log(content: &str) -> bool {
+    let tool_prefixes = [
+        "[Bash]",
+        "[Read]",
+        "[Write]",
+        "[Edit]",
+        "[Grep]",
+        "[Glob]",
+        "[LS]",
+        "[TodoWrite]",
+        "[Task]",
+        "[WebFetch]",
+        "[WebSearch]",
+    ];
+
+    if tool_prefixes.iter().any(|p| content.starts_with(p)) {
+        return true;
+    }
+
+    let envelope_prefixes =
+        ["<command-message>", "<command-name>", "<local-command-stdout>", "<local-command-stderr>"];
+
+    if envelope_prefixes.iter().any(|p| content.starts_with(p)) {
+        return true;
+    }
+
+    if content.starts_with("The file ") && content.contains(" has been updated successfully.") {
+        return true;
+    }
+
+    if content.starts_with("File created successfully at:") {
+        return true;
+    }
+
+    if content.starts_with("Tool execution aborted") {
+        return true;
+    }
+
+    if content.starts_with("(Bash completed with no output)") {
+        return true;
+    }
+
+    false
 }
 
 pub fn render_text(report: &ReflectReport) -> String {
