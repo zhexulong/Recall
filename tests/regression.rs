@@ -1186,6 +1186,7 @@ fn reflect_empty_scope_returns_coverage_note() {
     assert!(report.phases.is_empty());
     assert!(report.observed_patterns.is_empty());
     assert!(report.proposals.is_empty());
+    assert!(report.chunks.is_empty());
 }
 
 fn make_session_at(
@@ -1291,4 +1292,46 @@ fn reflect_builds_timeline_across_sessions() {
     assert!(report.observed_patterns.is_empty());
     assert!(report.proposals.is_empty());
     assert!(report.coverage_note.is_none());
+}
+
+#[test]
+fn reflect_chunks_long_sessions_before_project_summary() {
+    use recall::db::search::TimeRange;
+
+    let store = setup();
+    let session = make_session_at("s1", "codex", "raw1", "Long session", 1000);
+    store.insert_session(&session).unwrap();
+
+    let mut messages = Vec::new();
+    for i in 0..25 {
+        let role = if i % 2 == 0 { Role::User } else { Role::Assistant };
+        messages.push(make_message_at(
+            "s1",
+            role,
+            &format!("message {i}"),
+            i,
+            1000 + i as i64 * 100,
+        ));
+    }
+    store.insert_messages(&messages).unwrap();
+
+    let filters = recall::reflect::ReflectFilters {
+        sources: None,
+        time_range: TimeRange::All,
+        directory: None,
+        repo: None,
+    };
+    let report = recall::reflect::build_reflect_report(&store, &filters).unwrap();
+
+    assert!(
+        report.chunks.len() > 1,
+        "25 moments in one session should produce multiple chunks, got {}",
+        report.chunks.len()
+    );
+    assert_eq!(report.summary.timeline_moments, 25);
+    assert!(
+        report.phases[0].summary.contains("chunks"),
+        "phase summary should mention chunks: {}",
+        report.phases[0].summary
+    );
 }

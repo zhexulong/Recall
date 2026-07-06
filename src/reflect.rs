@@ -1,8 +1,12 @@
+use std::collections::BTreeMap;
+
 use anyhow::Result;
 use serde::Serialize;
 
 use crate::db::search::{RepoFilter, TimeRange};
 use crate::db::store::{SessionListSort, Store};
+
+pub const REFLECT_CHUNK_MOMENT_LIMIT: usize = 10;
 
 #[derive(Debug, Clone)]
 pub struct ReflectFilters {
@@ -24,6 +28,16 @@ pub struct ReflectScope {
     pub repo: Option<String>,
     pub time_range: String,
     pub sources: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ConversationChunk {
+    pub id: String,
+    pub session_id: String,
+    pub start_at: i64,
+    pub end_at: i64,
+    pub moment_ids: Vec<String>,
+    pub summary: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -71,6 +85,7 @@ pub struct ReflectProposalStub {
 pub struct ReflectReport {
     pub scope: ReflectScope,
     pub summary: ReflectSummary,
+    pub chunks: Vec<ConversationChunk>,
     pub phases: Vec<TimelinePhase>,
     pub observed_patterns: Vec<ObservedPattern>,
     pub proposals: Vec<ReflectProposalStub>,
@@ -99,6 +114,7 @@ pub fn build_reflect_report(store: &Store, filters: &ReflectFilters) -> Result<R
         return Ok(ReflectReport {
             scope,
             summary: ReflectSummary { sessions: 0, timeline_moments: 0, phases: 0 },
+            chunks: Vec::new(),
             phases: Vec::new(),
             observed_patterns: Vec::new(),
             proposals: Vec::new(),
@@ -135,6 +151,37 @@ pub fn build_reflect_report(store: &Store, filters: &ReflectFilters) -> Result<R
     });
 
     let timeline_moments_count = moments.len();
+
+    let mut sessions_by_id: BTreeMap<String, Vec<&TimelineMoment>> = BTreeMap::new();
+    for moment in &moments {
+        sessions_by_id.entry(moment.session_id.clone()).or_default().push(moment);
+    }
+
+    let mut chunks: Vec<ConversationChunk> = Vec::new();
+    for (session_id, session_moments) in &sessions_by_id {
+        for (chunk_idx, chunk_moments) in
+            session_moments.chunks(REFLECT_CHUNK_MOMENT_LIMIT).enumerate()
+        {
+            if chunk_moments.is_empty() {
+                continue;
+            }
+            let start_at = chunk_moments.first().map(|m| m.timestamp).unwrap_or(0);
+            let end_at = chunk_moments.last().map(|m| m.timestamp).unwrap_or(0);
+            let moment_ids: Vec<String> = chunk_moments.iter().map(|m| m.id.clone()).collect();
+            let count = chunk_moments.len();
+            chunks.push(ConversationChunk {
+                id: format!("{}:chunk-{}", session_id, chunk_idx + 1),
+                session_id: session_id.clone(),
+                start_at,
+                end_at,
+                moment_ids,
+                summary: format!("{} conversation moments from {}.", count, session_id),
+            });
+        }
+    }
+
+    chunks.sort_by(|a, b| a.start_at.cmp(&b.start_at).then_with(|| a.id.cmp(&b.id)));
+
     let mut phases = Vec::new();
 
     if !moments.is_empty() {
@@ -149,8 +196,9 @@ pub fn build_reflect_report(store: &Store, filters: &ReflectFilters) -> Result<R
             start_at,
             end_at,
             summary: format!(
-                "{} conversation moments across {} sessions.",
+                "{} conversation moments in {} chunks across {} sessions.",
                 timeline_moments_count,
+                chunks.len(),
                 session_ids.len()
             ),
             moments,
@@ -164,6 +212,7 @@ pub fn build_reflect_report(store: &Store, filters: &ReflectFilters) -> Result<R
             timeline_moments: timeline_moments_count,
             phases: phases.len(),
         },
+        chunks,
         phases,
         observed_patterns: Vec::new(),
         proposals: Vec::new(),
