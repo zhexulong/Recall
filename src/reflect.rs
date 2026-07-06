@@ -13,45 +13,67 @@ pub struct ReflectFilters {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub enum ReflectFormat {
+    Text,
+    Json,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReflectScope {
+    pub project: Option<String>,
+    pub repo: Option<String>,
+    pub time_range: String,
+    pub sources: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ReflectSummary {
     pub sessions: usize,
-    pub earliest_timestamp: Option<i64>,
-    pub latest_timestamp: Option<i64>,
+    pub timeline_moments: usize,
+    pub phases: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TimelinePhase {
+    pub id: String,
+    pub title: String,
+    pub start_at: i64,
+    pub end_at: i64,
+    pub summary: String,
+    pub moments: Vec<TimelineMoment>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TimelineMoment {
+    pub id: String,
     pub timestamp: i64,
-    pub label: String,
-    pub session_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Phase {
-    pub start_timestamp: i64,
-    pub end_timestamp: Option<i64>,
-    pub label: String,
+    pub source: String,
+    pub session_id: String,
+    pub session_title: String,
+    pub role: String,
+    pub summary: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ObservedPattern {
-    pub label: String,
-    pub description: String,
+    pub id: String,
+    pub summary: String,
+    pub timeline_moments: Vec<String>,
+    pub discussion_prompt: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Proposal {
-    pub label: String,
-    pub description: String,
+pub struct ReflectProposalStub {
+    pub note: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ReflectReport {
+    pub scope: ReflectScope,
     pub summary: ReflectSummary,
-    pub phases: Vec<Phase>,
-    pub moments: Vec<TimelineMoment>,
+    pub phases: Vec<TimelinePhase>,
     pub observed_patterns: Vec<ObservedPattern>,
-    pub proposals: Vec<Proposal>,
+    pub proposals: Vec<ReflectProposalStub>,
     pub coverage_note: Option<String>,
 }
 
@@ -66,32 +88,28 @@ pub fn build_reflect_report(store: &Store, filters: &ReflectFilters) -> Result<R
         SessionListSort::Oldest,
     )?;
 
+    let scope = ReflectScope {
+        project: filters.directory.clone(),
+        repo: filters.repo.as_ref().map(|r| format!("{:?}", r)),
+        time_range: format!("{:?}", filters.time_range),
+        sources: filters.sources.clone().unwrap_or_default(),
+    };
+
     if sessions.is_empty() {
         return Ok(ReflectReport {
-            summary: ReflectSummary {
-                sessions: 0,
-                earliest_timestamp: None,
-                latest_timestamp: None,
-            },
+            scope,
+            summary: ReflectSummary { sessions: 0, timeline_moments: 0, phases: 0 },
             phases: Vec::new(),
-            moments: Vec::new(),
             observed_patterns: Vec::new(),
             proposals: Vec::new(),
             coverage_note: Some("No sessions matched the reflect scope.".to_string()),
         });
     }
 
-    let earliest = sessions.first().map(|s| s.started_at);
-    let latest = sessions.last().map(|s| s.started_at);
-
     Ok(ReflectReport {
-        summary: ReflectSummary {
-            sessions: sessions.len(),
-            earliest_timestamp: earliest,
-            latest_timestamp: latest,
-        },
+        scope,
+        summary: ReflectSummary { sessions: sessions.len(), timeline_moments: 0, phases: 0 },
         phases: Vec::new(),
-        moments: Vec::new(),
         observed_patterns: Vec::new(),
         proposals: Vec::new(),
         coverage_note: None,

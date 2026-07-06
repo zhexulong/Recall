@@ -1181,7 +1181,8 @@ fn reflect_empty_scope_returns_coverage_note() {
 
     assert_eq!(report.coverage_note.as_deref(), Some("No sessions matched the reflect scope."),);
     assert_eq!(report.summary.sessions, 0);
-    assert!(report.moments.is_empty());
+    assert_eq!(report.summary.timeline_moments, 0);
+    assert_eq!(report.summary.phases, 0);
     assert!(report.phases.is_empty());
     assert!(report.observed_patterns.is_empty());
     assert!(report.proposals.is_empty());
