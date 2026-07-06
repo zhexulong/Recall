@@ -1335,3 +1335,57 @@ fn reflect_chunks_long_sessions_before_project_summary() {
         report.phases[0].summary
     );
 }
+
+#[test]
+fn reflect_scope_pattern_is_discussion_prompt_only() {
+    use recall::db::search::TimeRange;
+
+    let store = setup();
+
+    let session1 = make_session_at("s1", "codex", "raw1", "Scope session one", 1000);
+    let session2 = make_session_at("s2", "codex", "raw2", "Scope session two", 2000);
+
+    store.insert_session(&session1).unwrap();
+    store.insert_session(&session2).unwrap();
+
+    let msgs1 = vec![
+        make_message_at("s1", Role::User, "Keep it small; do not expand scope.", 0, 1100),
+        make_message_at("s1", Role::Assistant, "Understood, staying focused.", 1, 1200),
+    ];
+    let msgs2 = vec![
+        make_message_at("s2", Role::User, "Again, don't expand scope this time.", 0, 2100),
+        make_message_at("s2", Role::Assistant, "Got it.", 1, 2200),
+    ];
+    store.insert_messages(&msgs1).unwrap();
+    store.insert_messages(&msgs2).unwrap();
+
+    let filters = recall::reflect::ReflectFilters {
+        sources: None,
+        time_range: TimeRange::All,
+        directory: None,
+        repo: None,
+    };
+    let report = recall::reflect::build_reflect_report(&store, &filters).unwrap();
+
+    assert_eq!(
+        report.observed_patterns.len(),
+        1,
+        "should detect exactly one observed pattern for repeated scope boundary reminders"
+    );
+
+    let pattern = &report.observed_patterns[0];
+    assert_eq!(pattern.id, "pattern-scope-boundary");
+    assert!(
+        pattern.summary.to_lowercase().contains("scope"),
+        "summary should mention scope: {}",
+        pattern.summary
+    );
+    assert_eq!(pattern.timeline_moments.len(), 2);
+    assert!(
+        pattern.discussion_prompt.to_lowercase().contains("workflow issue"),
+        "discussion_prompt should mention workflow issue: {}",
+        pattern.discussion_prompt
+    );
+
+    assert!(report.proposals.is_empty(), "proposals must remain empty");
+}

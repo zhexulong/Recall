@@ -182,6 +182,8 @@ pub fn build_reflect_report(store: &Store, filters: &ReflectFilters) -> Result<R
 
     chunks.sort_by(|a, b| a.start_at.cmp(&b.start_at).then_with(|| a.id.cmp(&b.id)));
 
+    let observed_patterns = detect_observed_patterns(&moments);
+
     let mut phases = Vec::new();
 
     if !moments.is_empty() {
@@ -214,10 +216,37 @@ pub fn build_reflect_report(store: &Store, filters: &ReflectFilters) -> Result<R
         },
         chunks,
         phases,
-        observed_patterns: Vec::new(),
+        observed_patterns,
         proposals: Vec::new(),
         coverage_note: None,
     })
+}
+
+fn detect_observed_patterns(moments: &[TimelineMoment]) -> Vec<ObservedPattern> {
+    let scope_signals = ["scope", "don't expand", "do not expand", "keep it small", "不要扩大"];
+
+    let matched: Vec<&str> = moments
+        .iter()
+        .filter(|m| {
+            let lower = m.summary.to_lowercase();
+            scope_signals.iter().any(|sig| lower.contains(&sig.to_lowercase()))
+        })
+        .map(|m| m.id.as_str())
+        .collect();
+
+    if matched.len() >= 2 {
+        vec![ObservedPattern {
+            id: "pattern-scope-boundary".to_string(),
+            summary: "Scope boundary reminders appeared in multiple timeline moments."
+                .to_string(),
+            timeline_moments: matched.into_iter().map(String::from).collect(),
+            discussion_prompt:
+                "Is this a real workflow issue worth calibrating, or are these unrelated scope reminders?"
+                    .to_string(),
+        }]
+    } else {
+        Vec::new()
+    }
 }
 
 fn compact_content(content: &str, max_chars: usize) -> String {
