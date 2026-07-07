@@ -233,24 +233,38 @@ fn run_skill_install(
     });
     kitup::install_flag_error(&flags.errors)?;
 
-    let report = kitup::run_bundled_skill_install(&kitup::InstallWorkflowOptions {
-        install: kitup::InstallOptions {
-            base: kitup::BaseOptions::default(),
-            app_id: "recall".to_string(),
-            skill_bundle: recall_skill_bundle(),
-            scope: flags.scope,
-            agents: flags.agents,
-        },
-        yes: flags.yes,
-        dry_run: flags.dry_run,
-        stdin_tty: std::io::stdin().is_terminal(),
-        current_agent: None,
-        default_scope: Some(kitup::Scope::User),
-        scope_set: flags.scope_set,
-        prompt_scope: true,
-    })?;
-    kitup::install_workflow_error(&report)?;
+    let mut selected_agents = None;
+    for (index, (_, skill_bundle)) in bundled_skill_bundles().into_iter().enumerate() {
+        let report = kitup::run_bundled_skill_install(&kitup::InstallWorkflowOptions {
+            install: kitup::InstallOptions {
+                base: kitup::BaseOptions::default(),
+                app_id: "recall".to_string(),
+                skill_bundle,
+                scope: flags.scope,
+                agents: selected_agents.clone().unwrap_or_else(|| flags.agents.clone()),
+            },
+            yes: flags.yes || index > 0,
+            dry_run: flags.dry_run,
+            stdin_tty: std::io::stdin().is_terminal(),
+            current_agent: None,
+            default_scope: Some(kitup::Scope::User),
+            scope_set: flags.scope_set || index > 0,
+            prompt_scope: index == 0,
+        })?;
+        kitup::install_workflow_error(&report)?;
+        if report.canceled {
+            return Ok(());
+        }
+        if !report.selection.selected_host_ids.is_empty() {
+            selected_agents =
+                Some(kitup::AgentSelector::Explicit(report.selection.selected_host_ids));
+        }
+    }
     Ok(())
+}
+
+fn bundled_skill_bundles() -> Vec<(&'static str, kitup::SkillBundle)> {
+    vec![("recall", recall_skill_bundle()), ("reflect", reflect_skill_bundle())]
 }
 
 fn recall_skill_bundle() -> kitup::SkillBundle {
@@ -263,6 +277,21 @@ fn recall_skill_bundle() -> kitup::SkillBundle {
         kitup::SkillFile {
             path: "agents/openai.yaml".to_string(),
             contents: include_bytes!("../skills/recall/agents/openai.yaml").to_vec(),
+            mode: None,
+        },
+    ])
+}
+
+fn reflect_skill_bundle() -> kitup::SkillBundle {
+    kitup::files_bundle(vec![
+        kitup::SkillFile {
+            path: "SKILL.md".to_string(),
+            contents: include_bytes!("../skills/reflect/SKILL.md").to_vec(),
+            mode: None,
+        },
+        kitup::SkillFile {
+            path: "agents/openai.yaml".to_string(),
+            contents: include_bytes!("../skills/reflect/agents/openai.yaml").to_vec(),
             mode: None,
         },
     ])
@@ -408,6 +437,16 @@ mod tests {
                 assert!(yes);
             }
             _ => panic!("expected skill install command"),
+        }
+    }
+
+    #[test]
+    fn bundled_skill_bundles_are_valid() {
+        for (name, bundle) in super::bundled_skill_bundles() {
+            let info = kitup::validate_skill_bundle(&bundle);
+            assert!(info.valid, "{name} skill bundle invalid: {:?}", info.error_code);
+            assert_eq!(info.skill_name.as_deref(), Some(name));
+            assert!(info.description.is_some());
         }
     }
 
