@@ -1,4 +1,35 @@
 {
-  "schema": 1,
-  "extensions": {}
+  "extensions": {
+    "probe": {
+      "description": "Official Recall extension host probe",
+      "versions": {
+        "0.1.0": {
+          "commands": [
+            "probe"
+          ],
+          "min_recall": "0.2.10",
+          "protocol": 1,
+          "targets": {
+            "aarch64-apple-darwin": {
+              "sha256": "3e336679ab1a4c72a56b897908faa47f028d09d034f3b6d0f8ca6fc612219ad5",
+              "url": "https://github.com/samzong/Recall/releases/download/recall-probe-v0.1.0/recall-probe-v0.1.0-aarch64-apple-darwin.tar.gz"
+            },
+            "x86_64-apple-darwin": {
+              "sha256": "8b1bbf3a3867d6cbf0375657adf3a3f5f8787e28708685e49580021fdb1379aa",
+              "url": "https://github.com/samzong/Recall/releases/download/recall-probe-v0.1.0/recall-probe-v0.1.0-x86_64-apple-darwin.tar.gz"
+            },
+            "x86_64-pc-windows-msvc": {
+              "sha256": "1c172a659d57d9e944a131f6ada8143f98e9343e6c9bec04ab6923b223f8e3e5",
+              "url": "https://github.com/samzong/Recall/releases/download/recall-probe-v0.1.0/recall-probe-v0.1.0-x86_64-pc-windows-msvc.zip"
+            },
+            "x86_64-unknown-linux-gnu": {
+              "sha256": "be9c576e3184dd2300c4185d4d2962072feab1c7517657bab1359df4e1bd43aa",
+              "url": "https://github.com/samzong/Recall/releases/download/recall-probe-v0.1.0/recall-probe-v0.1.0-x86_64-unknown-linux-gnu.tar.gz"
+            }
+          }
+        }
+      }
+    }
+  },
+  "schema": 1
 }
