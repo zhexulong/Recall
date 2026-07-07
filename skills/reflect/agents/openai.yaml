@@ -1,0 +1,4 @@
+interface:
+  display_name: "Reflect"
+  short_description: "Discuss AI coding workflow patterns"
+  default_prompt: "Use $reflect to review this project's AI coding workflow history and discuss observed patterns before proposing changes."

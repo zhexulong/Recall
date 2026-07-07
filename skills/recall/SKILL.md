@@ -26,7 +26,7 @@ Pick the workflow from user intent. Do not run the full project-review scoping f
 | Resume or open | "继续这个会话", "resume this chat" | Session Resume/Open |
 | Find one session | "找上次讨论 migration 的会话", "当前项目最新 grok 会话" | Latest/Find Session Lookup |
 | Review project history | "用 recall 审查这个项目", "历史风险" | Scoping Protocol + Analysis Modes |
-| Reflect on AI coding workflow | "reflect on this project", "review my AI coding workflow", "timeline reflection", "workflow friction", "calibration discussion" | Reflect Workflow |
+| Reflect on AI coding workflow | "reflect on this project", "review my AI coding workflow", "timeline reflection", "workflow friction", "calibration discussion" | Route to the `reflect` skill |
 
 Treat "share" and "update/refresh share link" as the same action: sync the latest transcript, publish to Pages, return the live URL.
 
@@ -225,43 +225,9 @@ Recall review of <project>:
 
 Keep transcript content summarized. Quote only short excerpts when they are necessary evidence.
 
-## Reflect Workflow
+## Reflect Routing
 
-Use when the user wants project-level reflection on their AI coding process, workflow friction, handoffs, repeated corrections, or possible future calibration.
-
-Reflect produces **discussion input**, not automatic changes. It reconstructs a conversation-first timeline across sessions and surfaces observed patterns as questions. Do not treat any pattern as a calibration target or conclusion unless the user explicitly confirms the interpretation.
-
-### Scope and command
-
-Scope to the current repo unless the user asks otherwise. Use `git rev-parse --show-toplevel` to resolve the project directory.
-
-Run reflect for discussion:
-
-```bash
-recall reflect --project /absolute/project/path --format json
-```
-
-Add `--time 30d` or `--source <source>` when narrowing scope. Prefer JSON output for structured inspection.
-
-### Timeline summary
-
-Summarize the timeline in conversation-first terms: user intent, agent response, corrections, decisions, and outcomes. Do not turn the timeline into a tool-call log.
-
-### Observed patterns
-
-Present observed patterns as **discussion prompts**, not conclusions. Examples:
-
-- "The timeline shows scope expansion after the user narrowed requests. Is this a real pattern?"
-- "Several manual handoffs between tools appear. Are these intentional or friction points?"
-
-Do not present patterns as identity judgments, personality profiles, confidence scores, or user profiles.
-
-### Discussion guard
-
-1. Ask which pattern, if any, the user wants to discuss further.
-2. Do not turn a pattern into a calibration target, workflow change, or proposal unless the user explicitly confirms the interpretation.
-3. Verify any technical claim against the current repository before acting on it.
-4. Do not edit skills, prompts, configs, instruction files, or project files from reflect output alone. Reflect is not an apply step.
+When the user wants project-level reflection on their AI coding process, workflow friction, handoffs, repeated corrections, or possible future calibration, route to the installed `reflect` skill. Keep this `recall` skill focused on project memory lookup, sharing, export, and review workflows.
 
 ## Commands For Tool Calls
 
@@ -285,8 +251,6 @@ recall session resume --id <session-id> --print-command
 recall import recall-export.jsonl --dry-run
 recall import recall-export.jsonl
 recall usage --json
-recall reflect --project /absolute/project/path --format json
-recall reflect --project /absolute/project/path --time 30d --format text
 ```
 
 Supported time filters are `today`, `7d` or `week`, and `30d` or `month`. Unknown time values fall back to all history.
