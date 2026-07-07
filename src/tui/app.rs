@@ -5,6 +5,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::layout::{Position, Rect};
 
 use crate::adapters::ResumeCommand;
 use crate::config::AppConfig;
@@ -15,831 +16,117 @@ use crate::repo_identity::RepoIdentityCache;
 use crate::session_action;
 use crate::skill_audit::{self, SkillAuditFilters, SkillAuditReport};
 use crate::transcript;
-use crate::tui::search_worker::{SearchPhase, SearchRequest, SearchResponse, SearchWorker};
-use crate::types::{
-    BackgroundJobStatus, MatchSource, Message, Role, SearchResult, SemanticProgress,
-    SessionUsageEventRecord,
+use crate::tui::layout::{
+    MessagePane, SearchLayout, ViewingLayout, search_layout, vertical_scrollbar_position,
+    viewing_layout,
 };
-use crate::usage::{self, TokenTotals, UsageFilters, UsageReport};
+use crate::tui::search_state::{
+    FilterFocus, PanelFocus, ProjectPickerRow, SearchMouseTarget, SortOrder, SourcePickerRow,
+};
+use crate::tui::search_worker::{SearchPhase, SearchRequest, SearchResponse, SearchWorker};
+use crate::tui::share_state::{
+    AppMode, PendingCommandAction, PendingResume, ResumeOrigin, SharePopup,
+};
+use crate::tui::text_layout::wrap_visual_rows;
+use crate::tui::usage_state::UsageTab;
+use crate::tui::viewing_state::{SanitizedLine, ViewingSessionSummary, build_viewing_caches};
+use crate::types::{BackgroundJobStatus, MatchSource, Message, SearchResult, SemanticProgress};
+use crate::usage::{self, UsageFilters, UsageReport};
 
 const USAGE_LOADING_MIN_MS: u128 = 75;
 const SEARCH_DEBOUNCE_MS: u64 = 250;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UsageTab {
-    Tokens,
-    Skills,
-}
-
-pub enum AppMode {
-    Search,
-    Usage,
-    Viewing,
-    ShareResult,
-    ExportInput,
-    Settings,
-    Filters,
-    HandoffTarget,
-    ConfirmResume,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PendingCommandAction {
-    Resume,
-    OpenApp,
-    Handoff,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn source(id: &str, label: &str) -> (String, String) {
-        (id.to_string(), label.to_string())
-    }
-
-    fn app_with_sources() -> App {
-        App {
-            mode: AppMode::Search,
-            panel_focus: PanelFocus::SessionList,
-            query: String::new(),
-            cursor_pos: 0,
-            results: Vec::new(),
-            selected_index: 0,
-            preview_messages: Vec::new(),
-            preview_selected_msg: 0,
-            viewing_messages: Vec::new(),
-            viewing_selected_msg: 0,
-            viewing_session_summary: None,
-            all_sources: vec![
-                source("claude", "Claude"),
-                source("cursor", "Cursor"),
-                source("codex", "Codex"),
-            ],
-            config: AppConfig::default(),
-            source_filter_selection: Vec::new(),
-            project_directories: Vec::new(),
-            project_filter: None,
-            repo_filter: None,
-            time_filter: TimeRange::All,
-            filter_focus: FilterFocus::Source,
-            filters_dirty: false,
-            draft_source_filter_selection: Vec::new(),
-            draft_project_filter: None,
-            draft_repo_filter: None,
-            draft_time_filter: TimeRange::All,
-            draft_sort_order: SortOrder::Newest,
-            should_quit: false,
-            last_keystroke: Instant::now(),
-            search_pending: false,
-            search_request_id: 0,
-            active_search_id: 0,
-            search_in_flight: false,
-            search_feedback: None,
-            embedding_unavailable: false,
-            status_message: None,
-            sort_order: SortOrder::Newest,
-            export_path: String::new(),
-            export_cursor: 0,
-            total_sessions: 0,
-            total_messages: 0,
-            semantic_progress: SemanticProgress::default(),
-            background_status: BackgroundJobStatus::default(),
-            semantic_last_refresh: Instant::now(),
-            settings_selected: 0,
-            pending_resume: None,
-            handoff_target_selected: 0,
-            share_popup: None,
-            share_publish_rx: None,
-            exec_on_exit: None,
-            viewing_search_query: String::new(),
-            viewing_search_input: None,
-            viewing_search_input_cursor: 0,
-            viewing_search_status: None,
-            viewing_sanitized_lines: Vec::new(),
-            viewing_match_cache: Vec::new(),
-            source_picker_query: String::new(),
-            source_picker_cursor: 0,
-            source_picker_selected: 0,
-            source_picker_selection: Vec::new(),
-            source_picker_dirty: false,
-            source_picker_typing: false,
-            filters_editing_source: false,
-            project_picker_query: String::new(),
-            project_picker_cursor: 0,
-            project_picker_selected: 0,
-            project_picker_selection: None,
-            project_picker_dirty: false,
-            project_picker_typing: false,
-            filters_editing_project: false,
-            usage_report: None,
-            usage_year_report: None,
-            usage_error: None,
-            usage_time_filter: TimeRange::All,
-            usage_refresh_requested_at: None,
-            usage_breakdown_scroll: 0,
-            usage_tab: UsageTab::Tokens,
-            skill_audit_report: None,
-            skill_audit_error: None,
-            skill_audit_selected: 0,
-        }
-    }
-
-    fn codex_search_result() -> SearchResult {
-        SearchResult {
-            session: crate::types::Session {
-                id: "session1".to_string(),
-                source: "codex".to_string(),
-                source_id: "019e6d8d-588b-7fd2-a326-c525469ed120".to_string(),
-                title: "Codex thread".to_string(),
-                directory: Some("/tmp/project".to_string()),
-                repo_remote: None,
-                repo_slug: None,
-                repo_name: None,
-                started_at: 0,
-                updated_at: None,
-                message_count: 1,
-                entrypoint: None,
-                custom_title: None,
-                summary: None,
-                duration_minutes: None,
-                source_file_path: None,
-                is_import: false,
-            },
-            match_source: MatchSource::Fts,
-            snippet: None,
-        }
-    }
-
-    fn search_result_with_times(
-        source_id: &str,
-        started_at: i64,
-        updated_at: Option<i64>,
-    ) -> SearchResult {
-        let mut result = codex_search_result();
-        result.session.source_id = source_id.to_string();
-        result.session.started_at = started_at;
-        result.session.updated_at = updated_at;
-        result
-    }
-
-    fn message(role: Role, timestamp: Option<i64>, seq: u32) -> Message {
-        Message {
-            session_id: "session1".to_string(),
-            role,
-            content: "hello".to_string(),
-            timestamp,
-            seq,
-        }
-    }
-
-    fn usage_event(input_tokens: i64, output_tokens: i64) -> SessionUsageEventRecord {
-        SessionUsageEventRecord {
-            event_key: "event1".to_string(),
-            event_seq: 0,
-            message_seq: None,
-            timestamp: 120_000,
-            model: "gpt".to_string(),
-            provider: "openai".to_string(),
-            input_tokens,
-            output_tokens,
-            cache_read_tokens: 3,
-            cache_write_tokens: 2,
-            reasoning_tokens: 1,
-            token_source: "derived".to_string(),
-            parser_version: 1,
-            source_path: None,
-            raw_usage_json: None,
-        }
-    }
-
-    #[test]
-    fn viewing_session_summary_counts_messages_duration_and_tokens() {
-        let messages = vec![
-            message(Role::User, Some(0), 0),
-            message(Role::Assistant, Some(120_000), 1),
-            message(Role::User, None, 2),
-        ];
-        let usage_events = vec![usage_event(10, 5), usage_event(-1, 4)];
-
-        let summary = ViewingSessionSummary::from_session(&messages, None, &usage_events);
-
-        assert_eq!(summary.user_messages, 2);
-        assert_eq!(summary.total_messages, 3);
-        assert_eq!(summary.duration_minutes, Some(2));
-        assert_eq!(summary.usage_events, 2);
-        assert_eq!(summary.tokens.input_tokens, 10);
-        assert_eq!(summary.tokens.output_tokens, 9);
-        assert_eq!(summary.tokens.cache_read_tokens, 6);
-        assert_eq!(summary.tokens.cache_write_tokens, 4);
-        assert_eq!(summary.tokens.reasoning_tokens, 2);
-        assert_eq!(summary.tokens.total_tokens, 31);
-    }
-
-    #[test]
-    fn ctrl_o_from_search_confirms_codex_app_open() {
-        crate::db::schema::register_sqlite_vec();
-        let store = Store::open_in_memory().unwrap();
-        let mut app = app_with_sources();
-        app.results = vec![codex_search_result()];
-
-        app.handle_search_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL), &store);
-
-        assert!(matches!(app.mode, AppMode::ConfirmResume));
-        let pending = app.pending_resume.as_ref().unwrap();
-        assert!(matches!(pending.action, PendingCommandAction::OpenApp));
-        assert!(
-            pending
-                .command
-                .args
-                .iter()
-                .any(|arg| arg == "codex://threads/019e6d8d-588b-7fd2-a326-c525469ed120")
-        );
-    }
-
-    #[test]
-    fn imported_session_suppresses_resume_and_app_open() {
-        crate::db::schema::register_sqlite_vec();
-        let store = Store::open_in_memory().unwrap();
-        let mut app = app_with_sources();
-        let mut result = codex_search_result();
-        result.session.is_import = true;
-        app.results = vec![result];
-
-        for key_char in ['r', 'o'] {
-            app.status_message = None;
-            app.handle_search_key(
-                KeyEvent::new(KeyCode::Char(key_char), KeyModifiers::CONTROL),
-                &store,
-            );
-
-            assert!(
-                !matches!(app.mode, AppMode::ConfirmResume),
-                "ctrl+{key_char} must not open confirmation for imported session"
-            );
-            assert!(app.pending_resume.is_none());
-            assert!(
-                app.status_message.as_deref().unwrap_or_default().contains("Imported"),
-                "status message must explain why nothing happened"
-            );
-        }
-    }
-
-    #[test]
-    fn imported_session_can_handoff_from_detail_view() {
-        let mut app = app_with_sources();
-        let mut result = codex_search_result();
-        result.session.is_import = true;
-        app.results = vec![result];
-        app.viewing_messages = vec![message(Role::User, None, 0)];
-        app.mode = AppMode::Viewing;
-
-        app.handle_viewing_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
-        assert!(matches!(app.mode, AppMode::HandoffTarget));
-
-        app.handle_handoff_target_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-
-        assert!(matches!(app.mode, AppMode::ConfirmResume));
-        let pending = app.pending_resume.as_ref().unwrap();
-        assert_eq!(pending.action, PendingCommandAction::Handoff);
-        assert_eq!(pending.command.program, "codex");
-        assert!(pending.command.args[0].contains("This is a handoff, not a native resume."));
-    }
-
-    #[test]
-    fn confirming_source_picker_preserves_existing_multi_source_selection() {
-        let mut app = app_with_sources();
-        app.source_filter_selection = vec!["claude".to_string(), "cursor".to_string()];
-
-        app.open_source_picker();
-        app.commit_source_picker_filter();
-
-        assert_eq!(app.source_filter_selection, vec!["claude".to_string(), "cursor".to_string()]);
-    }
-
-    #[test]
-    fn project_picker_filters_by_path_tokens() {
-        let mut app = app_with_sources();
-        app.project_directories = vec![
-            ProjectDirectory {
-                directory: "/Users/x/git/samzong/Recall".to_string(),
-                sessions: 10,
-                last_seen: 2,
-            },
-            ProjectDirectory {
-                directory: "/Users/x/git/openclaw".to_string(),
-                sessions: 20,
-                last_seen: 1,
-            },
-        ];
-        app.project_picker_query = "sam recall".to_string();
-
-        let rows = app.project_picker_rows();
-
-        assert_eq!(rows.len(), 1);
-        assert!(matches!(rows[0], ProjectPickerRow::Project(0)));
-    }
-
-    #[test]
-    fn repo_filter_for_dir_resolves_remote_repo() {
-        let root =
-            std::env::temp_dir().join(format!("recall-repo-filter-{}", uuid::Uuid::new_v4()));
-        let nested = root.join("a").join("b");
-        std::fs::create_dir_all(&nested).unwrap();
-        Command::new("git").arg("init").current_dir(&root).output().unwrap();
-        Command::new("git")
-            .args(["remote", "add", "origin", "git@github.com:samzong/Recall.git"])
-            .current_dir(&root)
-            .output()
-            .unwrap();
-
-        let resolved = repo_filter_for_dir(&nested);
-
-        assert_eq!(resolved, Some(RepoFilter::Remote("github.com/samzong/Recall".to_string())));
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn search_filters_include_repo_filter() {
-        let mut app = app_with_sources();
-        app.repo_filter = Some(RepoFilter::Remote("github.com/samzong/Recall".to_string()));
-
-        let filters = app.search_filters();
-
-        assert_eq!(filters.directory, None);
-        assert_eq!(filters.repo, app.repo_filter);
-    }
-
-    #[test]
-    fn project_picker_space_toggles_pending_selection_without_committing() {
-        let mut app = app_with_sources();
-        app.project_directories = vec![ProjectDirectory {
-            directory: "/Users/x/git/samzong/Recall".to_string(),
-            sessions: 10,
-            last_seen: 2,
-        }];
-        app.project_picker_query = "recall".to_string();
-
-        app.toggle_project_picker_row();
-
-        assert_eq!(app.project_picker_selection, Some("/Users/x/git/samzong/Recall".to_string()));
-        assert!(app.project_picker_dirty);
-        assert_eq!(app.project_filter, None);
-    }
-
-    #[test]
-    fn source_picker_space_toggles_while_filtering() {
-        let mut app = app_with_sources();
-        app.source_picker_query = "cod".to_string();
-        app.source_picker_typing = true;
-
-        app.toggle_source_picker_row();
-        app.commit_source_picker_filter();
-
-        assert_eq!(app.draft_source_filter_selection, vec!["codex".to_string()]);
-        assert!(app.source_filter_selection.is_empty());
-    }
-
-    #[test]
-    fn app_defaults_to_newest_sort() {
-        crate::db::schema::register_sqlite_vec();
-        let store = Store::open_in_memory().unwrap();
-        let app = App::new(&store, vec![source("codex", "Codex")], AppConfig::default());
-
-        assert_eq!(app.sort_order, SortOrder::Newest);
-    }
-
-    #[test]
-    fn clear_filters_restores_newest_sort() {
-        let mut app = app_with_sources();
-        app.sort_order = SortOrder::Relevance;
-        app.open_filters();
-
-        app.clear_filters();
-
-        assert_eq!(app.sort_order, SortOrder::Relevance);
-        assert_eq!(app.draft_sort_order, SortOrder::Newest);
-        assert!(app.filters_dirty);
-    }
-
-    #[test]
-    fn newest_sort_uses_latest_activity() {
-        let app = app_with_sources();
-        let mut results = vec![
-            search_result_with_times("stale-newer-start", 900, Some(900)),
-            search_result_with_times("active-older-start", 100, Some(1000)),
-        ];
-
-        app.apply_sort(&mut results);
-
-        assert_eq!(results[0].session.source_id, "active-older-start");
-        assert_eq!(results[1].session.source_id, "stale-newer-start");
-    }
-
-    #[test]
-    fn stale_search_response_does_not_replace_current_results() {
-        crate::db::schema::register_sqlite_vec();
-        let store = Store::open_in_memory().unwrap();
-        let mut app = app_with_sources();
-        app.query = "current".to_string();
-        app.results = vec![search_result_with_times("current-result", 100, None)];
-        app.active_search_id = 2;
-
-        app.apply_search_response(
-            &store,
-            SearchResponse {
-                id: 1,
-                query: "old".to_string(),
-                phase: SearchPhase::Text,
-                result: Ok(vec![search_result_with_times("old-result", 200, None)]),
-            },
-        );
-
-        assert_eq!(app.results[0].session.source_id, "current-result");
-    }
-
-    #[test]
-    fn text_search_response_keeps_semantic_refinement_pending() {
-        crate::db::schema::register_sqlite_vec();
-        let store = Store::open_in_memory().unwrap();
-        let mut app = app_with_sources();
-        app.query = "parser".to_string();
-        app.active_search_id = 1;
-        app.semantic_progress.done_sessions = 1;
-
-        app.apply_search_response(
-            &store,
-            SearchResponse {
-                id: 1,
-                query: "parser".to_string(),
-                phase: SearchPhase::Text,
-                result: Ok(vec![search_result_with_times("fts-result", 100, None)]),
-            },
-        );
-
-        assert_eq!(app.results[0].session.source_id, "fts-result");
-        assert!(app.search_in_flight);
-        assert_eq!(app.search_feedback.as_deref(), Some("Refining semantic results..."));
-    }
-
-    #[test]
-    fn filter_time_range_left_right_defers_search_until_esc() {
-        crate::db::schema::register_sqlite_vec();
-        let store = Store::open_in_memory().unwrap();
-        let mut app = app_with_sources();
-        app.mode = AppMode::Filters;
-        app.query = "parser".to_string();
-        app.filter_focus = FilterFocus::Time;
-
-        app.handle_filters_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), &store);
-
-        assert_eq!(app.time_filter, TimeRange::All);
-        assert!(app.filters_dirty);
-        assert!(!app.search_pending);
-        assert!(matches!(app.mode, AppMode::Filters));
-
-        app.handle_filters_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &store);
-
-        assert_eq!(app.time_filter, TimeRange::Today);
-        assert!(matches!(app.mode, AppMode::Search));
-        assert!(app.search_pending);
-        assert_eq!(app.search_feedback.as_deref(), Some("Filters queued..."));
-    }
-
-    #[test]
-    fn filter_sort_left_right_defers_search_until_esc() {
-        crate::db::schema::register_sqlite_vec();
-        let store = Store::open_in_memory().unwrap();
-        let mut app = app_with_sources();
-        app.mode = AppMode::Filters;
-        app.query = "parser".to_string();
-        app.filter_focus = FilterFocus::Sort;
-
-        app.handle_filters_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), &store);
-
-        assert_eq!(app.sort_order, SortOrder::Newest);
-        assert!(app.filters_dirty);
-        assert!(!app.search_pending);
-
-        app.handle_filters_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &store);
-
-        assert_eq!(app.sort_order, SortOrder::Relevance);
-        assert!(matches!(app.mode, AppMode::Search));
-        assert!(app.search_pending);
-        assert_eq!(app.search_feedback.as_deref(), Some("Filters queued..."));
-    }
-
-    #[test]
-    fn filter_esc_closes_without_syncing_results_or_stats() {
-        crate::db::schema::register_sqlite_vec();
-        let store = Store::open_in_memory().unwrap();
-        let mut app = app_with_sources();
-        app.mode = AppMode::Filters;
-        app.filter_focus = FilterFocus::Time;
-        app.results = vec![search_result_with_times("existing", 100, None)];
-        app.total_sessions = 42;
-        app.total_messages = 99;
-
-        app.handle_filters_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), &store);
-        app.handle_filters_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &store);
-
-        assert!(matches!(app.mode, AppMode::Search));
-        assert_eq!(app.results[0].session.source_id, "existing");
-        assert_eq!(app.total_sessions, 42);
-        assert_eq!(app.total_messages, 99);
-        assert!(app.search_pending);
-        assert_eq!(app.search_feedback.as_deref(), Some("Filters queued..."));
-    }
-
-    #[test]
-    fn filter_commit_invalidates_in_flight_search_response() {
-        crate::db::schema::register_sqlite_vec();
-        let store = Store::open_in_memory().unwrap();
-        let mut app = app_with_sources();
-        app.query = "parser".to_string();
-        app.mode = AppMode::Filters;
-        app.filter_focus = FilterFocus::Time;
-        app.results = vec![search_result_with_times("current-result", 100, None)];
-        app.search_request_id = 1;
-        app.active_search_id = 1;
-        app.search_in_flight = true;
-
-        app.handle_filters_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), &store);
-        app.handle_filters_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &store);
-        app.apply_search_response(
-            &store,
-            SearchResponse {
-                id: 1,
-                query: "parser".to_string(),
-                phase: SearchPhase::Text,
-                result: Ok(vec![search_result_with_times("old-filter-result", 200, None)]),
-            },
-        );
-
-        assert_eq!(app.results[0].session.source_id, "current-result");
-        assert!(app.search_pending);
-    }
-
-    #[test]
-    fn applying_project_picker_returns_to_filter_overview_without_searching() {
-        let mut app = app_with_sources();
-        app.mode = AppMode::Filters;
-        app.filters_editing_project = true;
-        app.project_picker_selection = Some("/Users/x/git/samzong/Recall".to_string());
-        app.project_picker_dirty = true;
-
-        app.apply_project_picker();
-
-        assert!(matches!(app.mode, AppMode::Filters));
-        assert!(!app.filters_editing_project);
-        assert_eq!(app.project_filter, None);
-        assert_eq!(app.draft_project_filter, Some("/Users/x/git/samzong/Recall".to_string()));
-        assert!(app.filters_dirty);
-        assert!(!app.search_pending);
-    }
-
-    #[test]
-    fn applying_source_picker_returns_to_filter_overview_without_searching() {
-        let mut app = app_with_sources();
-        app.mode = AppMode::Filters;
-        app.filters_editing_source = true;
-        app.source_picker_selection = vec!["codex".to_string()];
-        app.source_picker_dirty = true;
-
-        app.apply_source_picker();
-
-        assert!(matches!(app.mode, AppMode::Filters));
-        assert!(!app.filters_editing_source);
-        assert!(app.source_filter_selection.is_empty());
-        assert_eq!(app.draft_source_filter_selection, vec!["codex".to_string()]);
-        assert!(app.filters_dirty);
-        assert!(!app.search_pending);
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum ResumeOrigin {
-    Search,
-    Viewing,
-}
-
-pub struct PendingResume {
-    pub command: ResumeCommand,
-    pub action: PendingCommandAction,
-    pub source_label: String,
-    pub session_title: String,
-    pub cwd: Option<String>,
-    pub origin: ResumeOrigin,
-}
-
-pub struct SharePopup {
-    pub url: Option<String>,
-    pub message: String,
-    pub is_error: bool,
-}
-
-pub struct SanitizedLine {
-    pub text: String,
-    pub lower: String,
-}
-
-fn build_viewing_caches(msgs: &[Message]) -> Vec<Vec<SanitizedLine>> {
-    msgs.iter()
-        .map(|m| {
-            m.content
-                .lines()
-                .map(|line| {
-                    let text = crate::utils::sanitize_line(line);
-                    let lower = text.to_lowercase();
-                    SanitizedLine { text, lower }
-                })
-                .collect()
-        })
-        .collect()
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ViewingSessionSummary {
-    pub user_messages: usize,
-    pub total_messages: usize,
-    pub duration_minutes: Option<u32>,
-    pub usage_events: usize,
-    pub tokens: TokenTotals,
-}
-
-impl ViewingSessionSummary {
-    fn from_session(
-        messages: &[Message],
-        duration_minutes: Option<u32>,
-        usage_events: &[SessionUsageEventRecord],
-    ) -> Self {
-        let mut tokens = TokenTotals::default();
-        for event in usage_events {
-            tokens.input_tokens += event.input_tokens.max(0);
-            tokens.output_tokens += event.output_tokens.max(0);
-            tokens.cache_read_tokens += event.cache_read_tokens.max(0);
-            tokens.cache_write_tokens += event.cache_write_tokens.max(0);
-            tokens.reasoning_tokens += event.reasoning_tokens.max(0);
-        }
-        tokens.total_tokens = tokens.input_tokens
-            + tokens.output_tokens
-            + tokens.cache_read_tokens
-            + tokens.cache_write_tokens
-            + tokens.reasoning_tokens;
-
-        Self {
-            user_messages: messages.iter().filter(|msg| msg.role == Role::User).count(),
-            total_messages: messages.len(),
-            duration_minutes: duration_minutes.or_else(|| message_span_minutes(messages)),
-            usage_events: usage_events.len(),
-            tokens,
-        }
-    }
-}
-
-fn message_span_minutes(messages: &[Message]) -> Option<u32> {
-    let mut timestamps = messages.iter().filter_map(|msg| msg.timestamp);
-    let first = timestamps.next()?;
-    let (min_ts, max_ts) =
-        timestamps.fold((first, first), |(min_ts, max_ts), ts| (min_ts.min(ts), max_ts.max(ts)));
-    Some(max_ts.saturating_sub(min_ts).div_euclid(60_000) as u32)
-}
-
-#[derive(PartialEq)]
-pub enum PanelFocus {
-    SessionList,
-    Preview,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-pub enum FilterFocus {
-    Source,
-    Project,
-    Time,
-    Sort,
-}
-
-impl FilterFocus {
-    fn next(self) -> Self {
-        match self {
-            Self::Source => Self::Project,
-            Self::Project => Self::Time,
-            Self::Time => Self::Sort,
-            Self::Sort => Self::Source,
-        }
-    }
-
-    fn previous(self) -> Self {
-        match self {
-            Self::Source => Self::Sort,
-            Self::Project => Self::Source,
-            Self::Time => Self::Project,
-            Self::Sort => Self::Time,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum SourcePickerRow {
-    All,
-    Source(usize),
-}
-
-#[derive(Clone, Copy)]
-pub enum ProjectPickerRow {
-    All,
-    Project(usize),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum SortOrder {
-    Relevance,
-    Newest,
-}
-
-pub struct App {
-    pub mode: AppMode,
-    pub panel_focus: PanelFocus,
-    pub query: String,
-    pub cursor_pos: usize,
-    pub results: Vec<SearchResult>,
-    pub selected_index: usize,
-    pub preview_messages: Vec<Message>,
-    pub preview_selected_msg: usize,
-    pub viewing_messages: Vec<Message>,
-    pub viewing_selected_msg: usize,
-    pub viewing_session_summary: Option<ViewingSessionSummary>,
-    pub all_sources: Vec<(String, String)>,
-    pub config: AppConfig,
-    pub source_filter_selection: Vec<String>,
-    pub time_filter: TimeRange,
-    pub filter_focus: FilterFocus,
-    pub filters_dirty: bool,
-    pub draft_source_filter_selection: Vec<String>,
-    pub draft_project_filter: Option<String>,
-    pub draft_repo_filter: Option<RepoFilter>,
-    pub draft_time_filter: TimeRange,
-    pub draft_sort_order: SortOrder,
-    pub should_quit: bool,
-    pub last_keystroke: Instant,
-    pub search_pending: bool,
-    pub search_request_id: u64,
-    pub active_search_id: u64,
-    pub search_in_flight: bool,
-    pub search_feedback: Option<String>,
-    pub embedding_unavailable: bool,
-    pub status_message: Option<String>,
-    pub sort_order: SortOrder,
-    pub export_path: String,
-    pub export_cursor: usize,
-    pub total_sessions: u64,
-    pub total_messages: u64,
-    pub semantic_progress: SemanticProgress,
-    pub background_status: BackgroundJobStatus,
-    pub semantic_last_refresh: Instant,
-    pub settings_selected: usize,
-    pub pending_resume: Option<PendingResume>,
-    pub handoff_target_selected: usize,
-    pub share_popup: Option<SharePopup>,
-    pub share_publish_rx: Option<mpsc::Receiver<Result<String, String>>>,
-    pub exec_on_exit: Option<(ResumeCommand, Option<String>)>,
-    pub viewing_search_query: String,
-    pub viewing_search_input: Option<String>,
-    pub viewing_search_input_cursor: usize,
-    pub viewing_search_status: Option<String>,
-    pub viewing_sanitized_lines: Vec<Vec<SanitizedLine>>,
-    pub viewing_match_cache: Vec<usize>,
-    pub source_picker_query: String,
-    pub source_picker_cursor: usize,
-    pub source_picker_selected: usize,
-    pub source_picker_selection: Vec<String>,
-    pub source_picker_dirty: bool,
-    pub source_picker_typing: bool,
-    pub filters_editing_source: bool,
-    pub project_directories: Vec<ProjectDirectory>,
-    pub project_filter: Option<String>,
-    pub repo_filter: Option<RepoFilter>,
-    pub project_picker_query: String,
-    pub project_picker_cursor: usize,
-    pub project_picker_selected: usize,
-    pub project_picker_selection: Option<String>,
-    pub project_picker_dirty: bool,
-    pub project_picker_typing: bool,
-    pub filters_editing_project: bool,
-    pub usage_report: Option<UsageReport>,
-    pub usage_year_report: Option<UsageReport>,
-    pub usage_error: Option<String>,
-    pub usage_time_filter: TimeRange,
-    pub usage_refresh_requested_at: Option<Instant>,
-    pub usage_breakdown_scroll: u16,
-    pub usage_tab: UsageTab,
-    pub skill_audit_report: Option<SkillAuditReport>,
-    pub skill_audit_error: Option<String>,
-    pub skill_audit_selected: usize,
+pub(crate) struct App {
+    terminal_area: Rect,
+    pub(crate) mode: AppMode,
+    pub(crate) panel_focus: PanelFocus,
+    pub(crate) query: String,
+    pub(crate) cursor_pos: usize,
+    pub(crate) results: Vec<SearchResult>,
+    pub(crate) selected_index: usize,
+    pub(crate) result_scroll_offset: usize,
+    pub(crate) preview_messages: Vec<Message>,
+    pub(crate) preview_selected_msg: usize,
+    pub(crate) preview_scroll_offset: usize,
+    pub(crate) viewing_messages: Vec<Message>,
+    pub(crate) viewing_selected_msg: usize,
+    pub(crate) viewing_scroll_offset: usize,
+    pub(crate) viewing_session_summary: Option<ViewingSessionSummary>,
+    pub(crate) all_sources: Vec<(String, String)>,
+    pub(crate) config: AppConfig,
+    pub(crate) source_filter_selection: Vec<String>,
+    pub(crate) time_filter: TimeRange,
+    pub(crate) filter_focus: FilterFocus,
+    pub(crate) filters_dirty: bool,
+    pub(crate) draft_source_filter_selection: Vec<String>,
+    pub(crate) draft_project_filter: Option<String>,
+    pub(crate) draft_repo_filter: Option<RepoFilter>,
+    pub(crate) draft_time_filter: TimeRange,
+    pub(crate) draft_sort_order: SortOrder,
+    pub(crate) should_quit: bool,
+    pub(crate) last_keystroke: Instant,
+    pub(crate) search_pending: bool,
+    pub(crate) search_request_id: u64,
+    pub(crate) active_search_id: u64,
+    pub(crate) search_in_flight: bool,
+    pub(crate) search_feedback: Option<String>,
+    pub(crate) embedding_unavailable: bool,
+    pub(crate) status_message: Option<String>,
+    pub(crate) sort_order: SortOrder,
+    pub(crate) export_path: String,
+    pub(crate) export_cursor: usize,
+    pub(crate) total_sessions: u64,
+    pub(crate) total_messages: u64,
+    pub(crate) semantic_progress: SemanticProgress,
+    pub(crate) background_status: BackgroundJobStatus,
+    pub(crate) semantic_last_refresh: Instant,
+    pub(crate) settings_selected: usize,
+    pub(crate) pending_resume: Option<PendingResume>,
+    pub(crate) handoff_target_selected: usize,
+    pub(crate) share_popup: Option<SharePopup>,
+    pub(crate) share_publish_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    pub(crate) exec_on_exit: Option<(ResumeCommand, Option<String>)>,
+    pub(crate) viewing_search_query: String,
+    pub(crate) viewing_search_input: Option<String>,
+    pub(crate) viewing_search_input_cursor: usize,
+    pub(crate) viewing_search_status: Option<String>,
+    pub(crate) viewing_sanitized_lines: Vec<Vec<SanitizedLine>>,
+    pub(crate) viewing_match_cache: Vec<usize>,
+    pub(crate) source_picker_query: String,
+    pub(crate) source_picker_cursor: usize,
+    pub(crate) source_picker_selected: usize,
+    pub(crate) source_picker_selection: Vec<String>,
+    pub(crate) source_picker_dirty: bool,
+    pub(crate) source_picker_typing: bool,
+    pub(crate) filters_editing_source: bool,
+    pub(crate) project_directories: Vec<ProjectDirectory>,
+    pub(crate) project_filter: Option<String>,
+    pub(crate) repo_filter: Option<RepoFilter>,
+    pub(crate) project_picker_query: String,
+    pub(crate) project_picker_cursor: usize,
+    pub(crate) project_picker_selected: usize,
+    pub(crate) project_picker_selection: Option<String>,
+    pub(crate) project_picker_dirty: bool,
+    pub(crate) project_picker_typing: bool,
+    pub(crate) filters_editing_project: bool,
+    pub(crate) usage_report: Option<UsageReport>,
+    pub(crate) usage_year_report: Option<UsageReport>,
+    pub(crate) usage_error: Option<String>,
+    pub(crate) usage_time_filter: TimeRange,
+    pub(crate) usage_refresh_requested_at: Option<Instant>,
+    pub(crate) usage_breakdown_scroll: u16,
+    pub(crate) usage_tab: UsageTab,
+    pub(crate) skill_audit_report: Option<SkillAuditReport>,
+    pub(crate) skill_audit_error: Option<String>,
+    pub(crate) skill_audit_selected: usize,
 }
 
 impl App {
-    pub fn new(store: &Store, all_sources: Vec<(String, String)>, mut config: AppConfig) -> Self {
+    pub(crate) fn new(
+        store: &Store,
+        all_sources: Vec<(String, String)>,
+        mut config: AppConfig,
+    ) -> Self {
         config.normalize_sources(&all_sources);
 
         let (total_sessions, total_messages) = store.stats().unwrap_or((0, 0));
@@ -848,16 +135,20 @@ impl App {
         let repo_filter = default_repo_filter(&config);
 
         let mut app = Self {
+            terminal_area: Rect::new(0, 0, 80, 24),
             mode: AppMode::Search,
             panel_focus: PanelFocus::SessionList,
             query: String::new(),
             cursor_pos: 0,
             results: Vec::new(),
             selected_index: 0,
+            result_scroll_offset: 0,
             preview_messages: Vec::new(),
             preview_selected_msg: 0,
+            preview_scroll_offset: 0,
             viewing_messages: Vec::new(),
             viewing_selected_msg: 0,
+            viewing_scroll_offset: 0,
             viewing_session_summary: None,
             all_sources,
             config,
@@ -933,7 +224,7 @@ impl App {
         app
     }
 
-    pub fn source_filter_ids(&self) -> Option<Vec<String>> {
+    pub(crate) fn source_filter_ids(&self) -> Option<Vec<String>> {
         let explicit = self.normalized_source_selection(&self.source_filter_selection);
         if !explicit.is_empty() {
             return Some(explicit);
@@ -951,11 +242,11 @@ impl App {
         }
     }
 
-    pub fn source_filter_label(&self) -> String {
+    pub(crate) fn source_filter_label(&self) -> String {
         self.source_filter_label_for_selection(&self.source_filter_selection)
     }
 
-    pub fn draft_source_filter_label(&self) -> String {
+    pub(crate) fn draft_source_filter_label(&self) -> String {
         self.source_filter_label_for_selection(&self.draft_source_filter_selection)
     }
 
@@ -982,11 +273,11 @@ impl App {
         }
     }
 
-    pub fn time_filter_label(&self) -> &'static str {
+    pub(crate) fn time_filter_label(&self) -> &'static str {
         Self::time_range_label(self.time_filter)
     }
 
-    pub fn draft_time_filter_label(&self) -> &'static str {
+    pub(crate) fn draft_time_filter_label(&self) -> &'static str {
         Self::time_range_label(self.draft_time_filter)
     }
 
@@ -999,7 +290,7 @@ impl App {
         }
     }
 
-    pub fn usage_time_label(&self) -> &'static str {
+    pub(crate) fn usage_time_label(&self) -> &'static str {
         match self.usage_time_filter {
             TimeRange::Today => "Today",
             TimeRange::Week => "7d",
@@ -1008,11 +299,11 @@ impl App {
         }
     }
 
-    pub fn sort_label(&self) -> &'static str {
+    pub(crate) fn sort_label(&self) -> &'static str {
         Self::sort_order_label(self.sort_order)
     }
 
-    pub fn draft_sort_label(&self) -> &'static str {
+    pub(crate) fn draft_sort_label(&self) -> &'static str {
         Self::sort_order_label(self.draft_sort_order)
     }
 
@@ -1023,7 +314,7 @@ impl App {
         }
     }
 
-    pub fn project_filter_label(&self) -> String {
+    pub(crate) fn project_filter_label(&self) -> String {
         self.project_filter
             .as_deref()
             .map(short_project_label)
@@ -1031,7 +322,7 @@ impl App {
             .unwrap_or_else(|| "All projects".to_string())
     }
 
-    pub fn draft_project_filter_label(&self) -> String {
+    pub(crate) fn draft_project_filter_label(&self) -> String {
         self.draft_project_filter
             .as_deref()
             .map(short_project_label)
@@ -1039,7 +330,7 @@ impl App {
             .unwrap_or_else(|| "All projects".to_string())
     }
 
-    pub fn source_label_for<'a>(&'a self, source_id: &'a str) -> &'a str {
+    pub(crate) fn source_label_for<'a>(&'a self, source_id: &'a str) -> &'a str {
         self.all_sources
             .iter()
             .find(|(id, _)| id == source_id)
@@ -1047,7 +338,7 @@ impl App {
             .unwrap_or(source_id)
     }
 
-    pub fn load_recent(&mut self, store: &Store) {
+    pub(crate) fn load_recent(&mut self, store: &Store) {
         let source_ids = self.source_filter_ids();
         let recent = store
             .list_recent_sessions_for_search_scope(
@@ -1063,13 +354,14 @@ impl App {
             .map(|session| SearchResult { session, match_source: MatchSource::Fts, snippet: None })
             .collect();
         self.selected_index = 0;
+        self.result_scroll_offset = 0;
         self.panel_focus = PanelFocus::SessionList;
         self.search_pending = false;
         self.search_in_flight = false;
         self.load_preview(store);
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent, store: &Store) {
+    pub(crate) fn handle_key(&mut self, key: KeyEvent, store: &Store) {
         self.status_message = None;
 
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
@@ -1080,7 +372,13 @@ impl App {
         match self.mode {
             AppMode::Search => self.handle_search_key(key, store),
             AppMode::Usage => self.handle_usage_key(key, store),
-            AppMode::Viewing => self.handle_viewing_key(key),
+            AppMode::Viewing => {
+                let before = self.viewing_selected_msg;
+                self.handle_viewing_key(key);
+                if matches!(self.mode, AppMode::Viewing) && self.viewing_selected_msg != before {
+                    self.anchor_viewing_scroll();
+                }
+            }
             AppMode::ShareResult => self.handle_share_result_key(key),
             AppMode::ExportInput => self.handle_export_key(key),
             AppMode::Settings => self.handle_settings_key(key, store),
@@ -1090,7 +388,11 @@ impl App {
         }
     }
 
-    pub fn poll_share_publish(&mut self) {
+    pub(crate) fn set_terminal_size(&mut self, width: u16, height: u16) {
+        self.terminal_area = Rect::new(0, 0, width, height);
+    }
+
+    pub(crate) fn poll_share_publish(&mut self) {
         let Some(rx) = self.share_publish_rx.take() else {
             return;
         };
@@ -1118,23 +420,15 @@ impl App {
         }
     }
 
-    pub fn handle_scroll_up(&mut self, store: &Store) {
+    pub(crate) fn handle_scroll_up(&mut self, store: &Store) {
         match self.mode {
             AppMode::Search => match self.panel_focus {
-                PanelFocus::SessionList => {
-                    if !self.results.is_empty() && self.selected_index > 0 {
-                        self.selected_index -= 1;
-                        self.load_preview(store);
-                    }
-                }
-                PanelFocus::Preview => {
-                    if self.preview_selected_msg > 0 {
-                        self.preview_selected_msg -= 1;
-                    }
-                }
+                PanelFocus::SessionList => self.scroll_result_list_up(store),
+                PanelFocus::Preview => self.move_preview_selection(true),
             },
             AppMode::Viewing if self.viewing_selected_msg > 0 => {
                 self.viewing_selected_msg -= 1;
+                self.anchor_viewing_scroll();
             }
             AppMode::Settings if self.settings_selected > 0 => {
                 self.settings_selected -= 1;
@@ -1164,23 +458,15 @@ impl App {
         }
     }
 
-    pub fn handle_scroll_down(&mut self, store: &Store) {
+    pub(crate) fn handle_scroll_down(&mut self, store: &Store) {
         match self.mode {
             AppMode::Search => match self.panel_focus {
-                PanelFocus::SessionList => {
-                    if self.selected_index + 1 < self.results.len() {
-                        self.selected_index += 1;
-                        self.load_preview(store);
-                    }
-                }
-                PanelFocus::Preview => {
-                    if self.preview_selected_msg + 1 < self.preview_messages.len() {
-                        self.preview_selected_msg += 1;
-                    }
-                }
+                PanelFocus::SessionList => self.scroll_result_list_down(store),
+                PanelFocus::Preview => self.move_preview_selection(false),
             },
             AppMode::Viewing if self.viewing_selected_msg + 1 < self.viewing_messages.len() => {
                 self.viewing_selected_msg += 1;
+                self.anchor_viewing_scroll();
             }
             AppMode::Settings if self.settings_selected + 1 < self.settings_row_count() => {
                 self.settings_selected += 1;
@@ -1211,6 +497,324 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn scroll_result_list_up(&mut self, store: &Store) {
+        if self.results.is_empty() || self.selected_index == 0 {
+            return;
+        }
+
+        let visible_rows = search_layout(self.terminal_area).list_inner().height as usize;
+        let start = self.result_list_start(visible_rows);
+        self.selected_index -= 1;
+        if visible_rows > 0 && self.selected_index < start {
+            self.result_scroll_offset = self.selected_index;
+        } else {
+            self.result_scroll_offset = start;
+        }
+        self.load_preview(store);
+    }
+
+    fn scroll_result_list_down(&mut self, store: &Store) {
+        if self.selected_index + 1 >= self.results.len() {
+            return;
+        }
+
+        let visible_rows = search_layout(self.terminal_area).list_inner().height as usize;
+        let start = self.result_list_start(visible_rows);
+        self.selected_index += 1;
+        if visible_rows > 0 && self.selected_index >= start + visible_rows {
+            self.result_scroll_offset = self.selected_index + 1 - visible_rows;
+        } else {
+            self.result_scroll_offset = start;
+        }
+        self.load_preview(store);
+    }
+
+    pub(crate) fn result_list_start(&self, visible_rows: usize) -> usize {
+        if visible_rows == 0 || self.results.is_empty() {
+            return 0;
+        }
+
+        let selected_index = self.selected_index.min(self.results.len().saturating_sub(1));
+        let max_start = self.results.len().saturating_sub(visible_rows);
+        let start = self.result_scroll_offset.min(max_start);
+        if selected_index < start {
+            selected_index
+        } else if selected_index >= start + visible_rows {
+            selected_index + 1 - visible_rows
+        } else {
+            start
+        }
+    }
+
+    fn move_preview_selection(&mut self, up: bool) {
+        let can_move = if up {
+            self.preview_selected_msg > 0
+        } else {
+            self.preview_selected_msg + 1 < self.preview_messages.len()
+        };
+        if !can_move {
+            return;
+        }
+
+        let inner = search_layout(self.terminal_area).preview_inner();
+        let pane = self.preview_pane(inner.width as usize);
+        let viewport = inner.height as usize;
+        self.preview_scroll_offset =
+            pane.scroll_start(self.preview_scroll_offset, self.preview_selected_msg, viewport);
+        if up {
+            self.preview_selected_msg -= 1;
+        } else {
+            self.preview_selected_msg += 1;
+        }
+        self.preview_scroll_offset =
+            pane.scroll_start(self.preview_scroll_offset, self.preview_selected_msg, viewport);
+    }
+
+    fn anchor_viewing_scroll(&mut self) {
+        let messages = viewing_layout(self.terminal_area).messages;
+        let pane = self.viewing_pane(messages.width as usize);
+        self.viewing_scroll_offset = pane.scroll_start(
+            self.viewing_scroll_offset,
+            self.viewing_selected_msg,
+            messages.height as usize,
+        );
+    }
+
+    pub(crate) fn preview_pane(&self, inner_width: usize) -> MessagePane {
+        let mut rows = Vec::with_capacity(self.preview_messages.len());
+        let mut focus = Vec::with_capacity(self.preview_messages.len());
+        for msg in &self.preview_messages {
+            let text: String = msg.content.chars().take(300).collect();
+            let body: usize = text
+                .lines()
+                .take(6)
+                .map(|line| {
+                    let line = crate::utils::sanitize_line(line);
+                    wrap_visual_rows(&format!("  {line}"), inner_width).len()
+                })
+                .sum();
+            rows.push(body + 2);
+            focus.push(1 + usize::from(text.lines().next().is_some()));
+        }
+        MessagePane::new(rows, focus)
+    }
+
+    pub(crate) fn viewing_pane(&self, inner_width: usize) -> MessagePane {
+        let mut rows = Vec::with_capacity(self.viewing_messages.len());
+        let mut focus = Vec::with_capacity(self.viewing_messages.len());
+        for index in 0..self.viewing_messages.len() {
+            let lines = self.viewing_sanitized_lines.get(index);
+            let body: usize = lines
+                .map(|lines| {
+                    lines.iter().map(|line| wrap_visual_rows(&line.text, inner_width).len()).sum()
+                })
+                .unwrap_or(0);
+            rows.push(body + 2);
+            focus.push(1 + usize::from(lines.is_some_and(|lines| !lines.is_empty())));
+        }
+        MessagePane::new(rows, focus)
+    }
+
+    fn preview_message_at_row(&self, row: u16, layout: &SearchLayout) -> Option<(usize, usize)> {
+        let inner = layout.preview_inner();
+        if row < inner.y || row >= inner.bottom() {
+            return None;
+        }
+
+        let pane = self.preview_pane(inner.width as usize);
+        let start = pane.scroll_start(
+            self.preview_scroll_offset,
+            self.preview_selected_msg,
+            inner.height as usize,
+        );
+        pane.index_at(start + usize::from(row - inner.y)).map(|index| (index, start))
+    }
+
+    fn viewing_message_at_row(&self, row: u16, layout: &ViewingLayout) -> Option<(usize, usize)> {
+        let messages = layout.messages;
+        if row < messages.y || row >= messages.bottom() {
+            return None;
+        }
+
+        let pane = self.viewing_pane(messages.width as usize);
+        let start = pane.scroll_start(
+            self.viewing_scroll_offset,
+            self.viewing_selected_msg,
+            messages.height as usize,
+        );
+        pane.index_at(start + usize::from(row - messages.y)).map(|index| (index, start))
+    }
+
+    pub(crate) fn handle_mouse_down(&mut self, column: u16, row: u16, store: &Store) {
+        if matches!(self.mode, AppMode::Viewing) {
+            let layout = viewing_layout(self.terminal_area);
+            if self.handle_viewing_scrollbar_down(column, row, &layout) {
+                return;
+            }
+            if let Some((index, start)) = self.viewing_message_at_row(row, &layout) {
+                self.viewing_selected_msg = index;
+                self.viewing_scroll_offset = start;
+            }
+            return;
+        }
+
+        if !matches!(self.mode, AppMode::Search) {
+            return;
+        }
+
+        let layout = search_layout(self.terminal_area);
+        if self.handle_search_scrollbar_down(column, row, &layout, store) {
+            return;
+        }
+
+        match self.search_mouse_target(column, row, &layout) {
+            Some(SearchMouseTarget::SessionList(index)) => {
+                self.panel_focus = PanelFocus::SessionList;
+                if let Some(index) = index {
+                    self.result_scroll_offset =
+                        self.result_list_start(layout.list_inner().height as usize);
+                    self.selected_index = index;
+                    self.load_preview(store);
+                }
+            }
+            Some(SearchMouseTarget::Preview) if !self.preview_messages.is_empty() => {
+                self.panel_focus = PanelFocus::Preview;
+                if let Some((index, start)) = self.preview_message_at_row(row, &layout) {
+                    self.preview_selected_msg = index;
+                    self.preview_scroll_offset = start;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_search_scrollbar_down(
+        &mut self,
+        column: u16,
+        row: u16,
+        layout: &SearchLayout,
+        store: &Store,
+    ) -> bool {
+        let list_viewport = layout.list_inner().height as usize;
+        if let Some(position) =
+            vertical_scrollbar_position(column, row, layout.list, self.results.len(), list_viewport)
+        {
+            self.panel_focus = PanelFocus::SessionList;
+            self.result_scroll_offset = position;
+            self.selected_index = position.min(self.results.len().saturating_sub(1));
+            self.load_preview(store);
+            return true;
+        }
+
+        if self.preview_messages.is_empty() {
+            return false;
+        }
+
+        let inner = layout.preview_inner();
+        let pane = self.preview_pane(inner.width as usize);
+        if let Some(position) = vertical_scrollbar_position(
+            column,
+            row,
+            layout.preview,
+            pane.total_rows(),
+            inner.height as usize,
+        ) {
+            self.panel_focus = PanelFocus::Preview;
+            self.preview_scroll_offset = position;
+            if let Some(index) = pane.index_at(position) {
+                self.preview_selected_msg = index;
+            }
+            return true;
+        }
+
+        false
+    }
+
+    fn handle_viewing_scrollbar_down(
+        &mut self,
+        column: u16,
+        row: u16,
+        layout: &ViewingLayout,
+    ) -> bool {
+        let messages = layout.messages;
+        let pane = self.viewing_pane(messages.width as usize);
+        if let Some(position) = vertical_scrollbar_position(
+            column,
+            row,
+            layout.scrollbar_area(),
+            pane.total_rows(),
+            messages.height as usize,
+        ) {
+            self.viewing_scroll_offset = position;
+            if let Some(index) = pane.index_at(position) {
+                self.viewing_selected_msg = index;
+            }
+            return true;
+        }
+
+        false
+    }
+
+    pub(crate) fn handle_mouse_scroll_up(&mut self, column: u16, row: u16, store: &Store) {
+        self.handle_mouse_scroll(column, row, true, store);
+    }
+
+    pub(crate) fn handle_mouse_scroll_down(&mut self, column: u16, row: u16, store: &Store) {
+        self.handle_mouse_scroll(column, row, false, store);
+    }
+
+    fn handle_mouse_scroll(&mut self, column: u16, row: u16, up: bool, store: &Store) {
+        if matches!(self.mode, AppMode::Search) {
+            let layout = search_layout(self.terminal_area);
+            match self.search_mouse_target(column, row, &layout) {
+                Some(SearchMouseTarget::SessionList(_)) => {
+                    self.panel_focus = PanelFocus::SessionList;
+                    if up {
+                        self.scroll_result_list_up(store);
+                    } else {
+                        self.scroll_result_list_down(store);
+                    }
+                    return;
+                }
+                Some(SearchMouseTarget::Preview) if !self.preview_messages.is_empty() => {
+                    self.panel_focus = PanelFocus::Preview;
+                    self.move_preview_selection(up);
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        if up { self.handle_scroll_up(store) } else { self.handle_scroll_down(store) }
+    }
+
+    fn search_mouse_target(
+        &self,
+        column: u16,
+        row: u16,
+        layout: &SearchLayout,
+    ) -> Option<SearchMouseTarget> {
+        let pos = Position { x: column, y: row };
+        if layout.list.contains(pos) {
+            let inner = layout.list_inner();
+            if !inner.contains(pos) {
+                return Some(SearchMouseTarget::SessionList(None));
+            }
+
+            let start = self.result_list_start(inner.height as usize);
+            let index = start + usize::from(row - inner.y);
+            return Some(SearchMouseTarget::SessionList(
+                (index < self.results.len()).then_some(index),
+            ));
+        }
+
+        if layout.preview.contains(pos) {
+            return Some(SearchMouseTarget::Preview);
+        }
+
+        None
     }
 
     fn handle_search_key(&mut self, key: KeyEvent, store: &Store) {
@@ -1290,6 +894,7 @@ impl App {
                 } else if !self.preview_messages.is_empty() {
                     self.panel_focus = PanelFocus::Preview;
                     self.preview_selected_msg = 0;
+                    self.preview_scroll_offset = 0;
                 }
             }
             KeyCode::Up => {
@@ -1361,6 +966,7 @@ impl App {
                 self.mode = AppMode::Search;
                 self.viewing_messages.clear();
                 self.viewing_selected_msg = 0;
+                self.viewing_scroll_offset = 0;
                 self.viewing_session_summary = None;
                 self.viewing_search_query.clear();
                 self.viewing_search_status = None;
@@ -1420,6 +1026,20 @@ impl App {
             KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
                 self.share_popup = None;
                 self.mode = AppMode::Viewing;
+            }
+            KeyCode::Char('o') | KeyCode::Char('O') => {
+                if let Some(url) = self.share_popup.as_ref().and_then(|popup| popup.url.clone()) {
+                    match crate::utils::open_url_in_default_browser(&url) {
+                        Ok(()) => {
+                            if let Some(popup) = self.share_popup.as_mut() {
+                                popup.message = "Opened share URL".to_string();
+                            }
+                        }
+                        Err(error) => {
+                            self.status_message = Some(format!("Open failed: {error}"));
+                        }
+                    }
+                }
             }
             KeyCode::Char('c') | KeyCode::Char('C') => {
                 if let Some(url) = self.share_popup.as_ref().and_then(|popup| popup.url.clone()) {
@@ -1500,20 +1120,24 @@ impl App {
         }
     }
 
+    pub(crate) fn viewing_search_terms(&self) -> Vec<String> {
+        self.viewing_search_query.split_whitespace().map(str::to_lowercase).collect()
+    }
+
     fn recompute_viewing_matches(&mut self) {
         self.viewing_match_cache.clear();
-        if self.viewing_search_query.is_empty() {
+        let terms = self.viewing_search_terms();
+        if terms.is_empty() {
             return;
         }
-        let needle = self.viewing_search_query.to_lowercase();
         for (i, msg_lines) in self.viewing_sanitized_lines.iter().enumerate() {
-            if msg_lines.iter().any(|l| l.lower.contains(&needle)) {
+            if msg_lines.iter().any(|l| terms.iter().any(|t| l.lower.contains(t.as_str()))) {
                 self.viewing_match_cache.push(i);
             }
         }
     }
 
-    pub fn viewing_match_indices(&self) -> &[usize] {
+    pub(crate) fn viewing_match_indices(&self) -> &[usize] {
         &self.viewing_match_cache
     }
 
@@ -2185,7 +1809,7 @@ impl App {
         }
     }
 
-    pub fn refresh_usage(&mut self, store: &Store) {
+    pub(crate) fn refresh_usage(&mut self, store: &Store) {
         self.usage_refresh_requested_at = None;
         self.usage_error = None;
         self.skill_audit_error = None;
@@ -2232,22 +1856,22 @@ impl App {
         }
     }
 
-    pub fn request_usage_refresh(&mut self) {
+    pub(crate) fn request_usage_refresh(&mut self) {
         self.usage_error = None;
         self.usage_refresh_requested_at = Some(Instant::now());
     }
 
-    pub fn usage_is_loading(&self) -> bool {
+    pub(crate) fn usage_is_loading(&self) -> bool {
         self.usage_refresh_requested_at.is_some()
     }
 
-    pub fn usage_refresh_is_due(&self) -> bool {
+    pub(crate) fn usage_refresh_is_due(&self) -> bool {
         self.usage_refresh_requested_at
             .map(|requested_at| requested_at.elapsed().as_millis() >= USAGE_LOADING_MIN_MS)
             .unwrap_or(false)
     }
 
-    pub fn fail_usage_refresh(&mut self, error: impl std::fmt::Display) {
+    pub(crate) fn fail_usage_refresh(&mut self, error: impl std::fmt::Display) {
         self.usage_refresh_requested_at = None;
         self.usage_report = None;
         self.usage_year_report = None;
@@ -2256,7 +1880,7 @@ impl App {
         self.skill_audit_error = Some(format!("Skill audit unavailable: {error}"));
     }
 
-    pub fn try_search(&mut self, store: &Store, worker: &SearchWorker) {
+    pub(crate) fn try_search(&mut self, store: &Store, worker: &SearchWorker) {
         self.refresh_semantic_progress(store);
         if !self.search_pending {
             return;
@@ -2286,7 +1910,7 @@ impl App {
         }
     }
 
-    pub fn apply_search_response(&mut self, store: &Store, response: SearchResponse) {
+    pub(crate) fn apply_search_response(&mut self, store: &Store, response: SearchResponse) {
         if response.id != self.active_search_id || response.query != self.query.trim() {
             return;
         }
@@ -2296,6 +1920,7 @@ impl App {
                 self.apply_sort(&mut results);
                 self.results = results;
                 self.selected_index = 0;
+                self.result_scroll_offset = 0;
                 self.panel_focus = PanelFocus::SessionList;
                 self.load_preview(store);
 
@@ -2399,23 +2024,17 @@ impl App {
         }
     }
 
-    pub fn enabled_sources(&self) -> Vec<&(String, String)> {
+    pub(crate) fn enabled_sources(&self) -> Vec<&(String, String)> {
         self.all_sources.iter().filter(|(id, _)| self.config.is_source_enabled(id)).collect()
     }
 
-    pub fn source_is_selected(&self, source_id: &str) -> bool {
-        self.normalized_source_selection(&self.source_filter_selection)
-            .iter()
-            .any(|id| id == source_id)
-    }
-
-    pub fn source_is_selected_in_picker(&self, source_id: &str) -> bool {
+    pub(crate) fn source_is_selected_in_picker(&self, source_id: &str) -> bool {
         self.normalized_source_selection(&self.source_picker_selection)
             .iter()
             .any(|id| id == source_id)
     }
 
-    pub fn source_picker_rows(&self) -> Vec<SourcePickerRow> {
+    pub(crate) fn source_picker_rows(&self) -> Vec<SourcePickerRow> {
         let query = self.source_picker_query.trim().to_lowercase();
         let mut rows = Vec::new();
         if query.is_empty() {
@@ -2438,7 +2057,7 @@ impl App {
         rows
     }
 
-    pub fn project_picker_rows(&self) -> Vec<ProjectPickerRow> {
+    pub(crate) fn project_picker_rows(&self) -> Vec<ProjectPickerRow> {
         let query = self.project_picker_query.trim().to_lowercase();
         let mut rows = Vec::new();
         if query.is_empty() {
@@ -2504,14 +2123,14 @@ impl App {
         self.skill_audit_selected = 0;
     }
 
-    pub fn usage_tab_label(&self) -> &'static str {
+    pub(crate) fn usage_tab_label(&self) -> &'static str {
         match self.usage_tab {
             UsageTab::Tokens => "tokens",
             UsageTab::Skills => "skills",
         }
     }
 
-    pub fn skill_audit_entry_count(&self) -> usize {
+    pub(crate) fn skill_audit_entry_count(&self) -> usize {
         let Some(report) = self.skill_audit_report.as_ref() else {
             return 0;
         };
@@ -2550,6 +2169,7 @@ impl App {
                     })
                     .collect();
                 self.selected_index = 0;
+                self.result_scroll_offset = 0;
                 self.panel_focus = PanelFocus::SessionList;
                 self.mode = AppMode::Search;
                 self.query = format!("skill:{skill_id}");
@@ -2653,6 +2273,7 @@ impl App {
 
     fn load_preview(&mut self, store: &Store) {
         self.preview_selected_msg = 0;
+        self.preview_scroll_offset = 0;
         if let Some(result) = self.results.get(self.selected_index) {
             match store.get_messages(&result.session.id) {
                 Ok(msgs) => {
@@ -2681,11 +2302,20 @@ impl App {
             self.viewing_sanitized_lines = build_viewing_caches(&msgs);
             self.viewing_messages = msgs;
             self.viewing_selected_msg = 0;
-            self.viewing_search_query.clear();
+            self.viewing_scroll_offset = 0;
+            self.viewing_search_query = self
+                .query
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
             self.viewing_search_input = None;
             self.viewing_search_input_cursor = 0;
             self.viewing_search_status = None;
-            self.viewing_match_cache.clear();
+            self.recompute_viewing_matches();
+            if let Some(&first) = self.viewing_match_cache.first() {
+                self.viewing_selected_msg = first;
+            }
             self.mode = AppMode::Viewing;
         }
     }
@@ -2908,5 +2538,734 @@ fn repo_filter_label(repo: &RepoFilter) -> String {
         RepoFilter::Remote(remote) => short_project_label(remote),
         RepoFilter::Slug(slug) => slug.clone(),
         RepoFilter::Name(name) => name.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{Role, SessionUsageEventRecord};
+
+    fn source(id: &str, label: &str) -> (String, String) {
+        (id.to_string(), label.to_string())
+    }
+
+    fn app_with_sources() -> App {
+        App {
+            terminal_area: Rect::new(0, 0, 80, 24),
+            mode: AppMode::Search,
+            panel_focus: PanelFocus::SessionList,
+            query: String::new(),
+            cursor_pos: 0,
+            results: Vec::new(),
+            selected_index: 0,
+            result_scroll_offset: 0,
+            preview_messages: Vec::new(),
+            preview_selected_msg: 0,
+            preview_scroll_offset: 0,
+            viewing_messages: Vec::new(),
+            viewing_selected_msg: 0,
+            viewing_scroll_offset: 0,
+            viewing_session_summary: None,
+            all_sources: vec![
+                source("claude", "Claude"),
+                source("cursor", "Cursor"),
+                source("codex", "Codex"),
+            ],
+            config: AppConfig::default(),
+            source_filter_selection: Vec::new(),
+            project_directories: Vec::new(),
+            project_filter: None,
+            repo_filter: None,
+            time_filter: TimeRange::All,
+            filter_focus: FilterFocus::Source,
+            filters_dirty: false,
+            draft_source_filter_selection: Vec::new(),
+            draft_project_filter: None,
+            draft_repo_filter: None,
+            draft_time_filter: TimeRange::All,
+            draft_sort_order: SortOrder::Newest,
+            should_quit: false,
+            last_keystroke: Instant::now(),
+            search_pending: false,
+            search_request_id: 0,
+            active_search_id: 0,
+            search_in_flight: false,
+            search_feedback: None,
+            embedding_unavailable: false,
+            status_message: None,
+            sort_order: SortOrder::Newest,
+            export_path: String::new(),
+            export_cursor: 0,
+            total_sessions: 0,
+            total_messages: 0,
+            semantic_progress: SemanticProgress::default(),
+            background_status: BackgroundJobStatus::default(),
+            semantic_last_refresh: Instant::now(),
+            settings_selected: 0,
+            pending_resume: None,
+            handoff_target_selected: 0,
+            share_popup: None,
+            share_publish_rx: None,
+            exec_on_exit: None,
+            viewing_search_query: String::new(),
+            viewing_search_input: None,
+            viewing_search_input_cursor: 0,
+            viewing_search_status: None,
+            viewing_sanitized_lines: Vec::new(),
+            viewing_match_cache: Vec::new(),
+            source_picker_query: String::new(),
+            source_picker_cursor: 0,
+            source_picker_selected: 0,
+            source_picker_selection: Vec::new(),
+            source_picker_dirty: false,
+            source_picker_typing: false,
+            filters_editing_source: false,
+            project_picker_query: String::new(),
+            project_picker_cursor: 0,
+            project_picker_selected: 0,
+            project_picker_selection: None,
+            project_picker_dirty: false,
+            project_picker_typing: false,
+            filters_editing_project: false,
+            usage_report: None,
+            usage_year_report: None,
+            usage_error: None,
+            usage_time_filter: TimeRange::All,
+            usage_refresh_requested_at: None,
+            usage_breakdown_scroll: 0,
+            usage_tab: UsageTab::Tokens,
+            skill_audit_report: None,
+            skill_audit_error: None,
+            skill_audit_selected: 0,
+        }
+    }
+
+    fn codex_search_result() -> SearchResult {
+        SearchResult {
+            session: crate::types::Session {
+                id: "session1".to_string(),
+                source: "codex".to_string(),
+                source_id: "019e6d8d-588b-7fd2-a326-c525469ed120".to_string(),
+                title: "Codex thread".to_string(),
+                directory: Some("/tmp/project".to_string()),
+                repo_remote: None,
+                repo_slug: None,
+                repo_name: None,
+                started_at: 0,
+                updated_at: None,
+                message_count: 1,
+                entrypoint: None,
+                custom_title: None,
+                summary: None,
+                duration_minutes: None,
+                source_file_path: None,
+                is_import: false,
+            },
+            match_source: MatchSource::Fts,
+            snippet: None,
+        }
+    }
+
+    fn search_result_with_times(
+        source_id: &str,
+        started_at: i64,
+        updated_at: Option<i64>,
+    ) -> SearchResult {
+        let mut result = codex_search_result();
+        result.session.source_id = source_id.to_string();
+        result.session.started_at = started_at;
+        result.session.updated_at = updated_at;
+        result
+    }
+
+    fn message(role: Role, timestamp: Option<i64>, seq: u32) -> Message {
+        Message {
+            session_id: "session1".to_string(),
+            role,
+            content: "hello".to_string(),
+            timestamp,
+            seq,
+        }
+    }
+
+    fn usage_event(input_tokens: i64, output_tokens: i64) -> SessionUsageEventRecord {
+        SessionUsageEventRecord {
+            event_key: "event1".to_string(),
+            event_seq: 0,
+            message_seq: None,
+            timestamp: 120_000,
+            model: "gpt".to_string(),
+            provider: "openai".to_string(),
+            input_tokens,
+            output_tokens,
+            cache_read_tokens: 3,
+            cache_write_tokens: 2,
+            reasoning_tokens: 1,
+            token_source: "derived".to_string(),
+            parser_version: 1,
+            source_path: None,
+            raw_usage_json: None,
+        }
+    }
+
+    fn numbered_results(count: usize) -> Vec<SearchResult> {
+        (0..count)
+            .map(|n| {
+                let mut result = codex_search_result();
+                result.session.id = format!("session{n}");
+                result.session.title = format!("Session {n}");
+                result
+            })
+            .collect()
+    }
+
+    #[test]
+    fn list_up_keeps_viewport_while_selection_remains_visible() {
+        crate::db::schema::register_sqlite_vec();
+        let store = Store::open_in_memory().unwrap();
+        let mut app = app_with_sources();
+        app.set_terminal_size(80, 12);
+        app.results = numbered_results(6);
+        app.selected_index = 5;
+        app.result_scroll_offset = 1;
+
+        let up = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
+        app.handle_key(up, &store);
+        assert_eq!(app.selected_index, 4);
+        assert_eq!(app.result_list_start(5), 1);
+
+        for _ in 0..3 {
+            app.handle_key(up, &store);
+        }
+        assert_eq!(app.selected_index, 1);
+        assert_eq!(app.result_list_start(5), 1);
+
+        app.handle_key(up, &store);
+        assert_eq!(app.selected_index, 0);
+        assert_eq!(app.result_list_start(5), 0);
+    }
+
+    #[test]
+    fn mouse_click_selects_visible_session_row() {
+        crate::db::schema::register_sqlite_vec();
+        let store = Store::open_in_memory().unwrap();
+        let mut app = app_with_sources();
+        app.set_terminal_size(22, 12);
+        app.results = numbered_results(6);
+
+        app.handle_mouse_down(2, 6, &store);
+
+        assert!(app.panel_focus == PanelFocus::SessionList);
+        assert_eq!(app.selected_index, 1);
+    }
+
+    #[test]
+    fn mouse_click_selects_preview_message() {
+        crate::db::schema::register_sqlite_vec();
+        let store = Store::open_in_memory().unwrap();
+        let mut app = app_with_sources();
+        app.set_terminal_size(80, 12);
+        app.results = numbered_results(1);
+        app.preview_messages =
+            vec![message(Role::User, None, 0), message(Role::Assistant, None, 1)];
+
+        app.handle_mouse_down(40, 8, &store);
+
+        assert!(app.panel_focus == PanelFocus::Preview);
+        assert_eq!(app.preview_selected_msg, 1);
+    }
+
+    #[test]
+    fn viewing_selection_anchors_scroll_offset() {
+        crate::db::schema::register_sqlite_vec();
+        let store = Store::open_in_memory().unwrap();
+        let mut app = app_with_sources();
+        app.set_terminal_size(80, 10);
+        app.mode = AppMode::Viewing;
+        app.viewing_messages = (0..5).map(|n| message(Role::User, None, n)).collect();
+        app.viewing_sanitized_lines = build_viewing_caches(&app.viewing_messages);
+
+        let down = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+        let up = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
+
+        app.handle_key(down, &store);
+        assert_eq!((app.viewing_selected_msg, app.viewing_scroll_offset), (1, 0));
+
+        app.handle_key(down, &store);
+        assert_eq!((app.viewing_selected_msg, app.viewing_scroll_offset), (2, 2));
+
+        app.handle_key(down, &store);
+        assert_eq!((app.viewing_selected_msg, app.viewing_scroll_offset), (3, 5));
+
+        app.handle_key(up, &store);
+        assert_eq!((app.viewing_selected_msg, app.viewing_scroll_offset), (2, 5));
+    }
+
+    #[test]
+    fn enter_viewing_seeds_search_query_and_jumps_to_first_match() {
+        crate::db::schema::register_sqlite_vec();
+        let store = Store::open_in_memory().unwrap();
+        let mut app = app_with_sources();
+        let result = codex_search_result();
+        store.insert_session(&result.session).unwrap();
+        let mut first = message(Role::User, None, 0);
+        first.content = "intro".to_string();
+        let mut second = message(Role::Assistant, None, 1);
+        second.content = "Deploy finished".to_string();
+        store.insert_messages(&[first, second]).unwrap();
+        app.results = vec![result];
+        app.query = "deploy missing".to_string();
+
+        app.enter_viewing(&store);
+
+        assert!(matches!(app.mode, AppMode::Viewing));
+        assert_eq!(app.viewing_search_query, "deploy missing");
+        assert_eq!(app.viewing_match_indices(), &[1]);
+        assert_eq!(app.viewing_selected_msg, 1);
+    }
+
+    #[test]
+    fn enter_viewing_strips_punctuation_from_seeded_query_like_fts() {
+        crate::db::schema::register_sqlite_vec();
+        let store = Store::open_in_memory().unwrap();
+        let mut app = app_with_sources();
+        let result = codex_search_result();
+        store.insert_session(&result.session).unwrap();
+        let mut first = message(Role::User, None, 0);
+        first.content = "intro".to_string();
+        let mut second = message(Role::Assistant, None, 1);
+        second.content = "run deploy(now) with config.yaml".to_string();
+        store.insert_messages(&[first, second]).unwrap();
+        app.results = vec![result];
+        app.query = "deploy() config.yaml".to_string();
+
+        app.enter_viewing(&store);
+
+        assert_eq!(app.viewing_search_query, "deploy config yaml");
+        assert_eq!(app.viewing_match_indices(), &[1]);
+        assert_eq!(app.viewing_selected_msg, 1);
+    }
+
+    #[test]
+    fn enter_viewing_with_blank_query_starts_at_first_message() {
+        crate::db::schema::register_sqlite_vec();
+        let store = Store::open_in_memory().unwrap();
+        let mut app = app_with_sources();
+        let result = codex_search_result();
+        store.insert_session(&result.session).unwrap();
+        store.insert_messages(&[message(Role::User, None, 0)]).unwrap();
+        app.results = vec![result];
+        app.query = "   ".to_string();
+
+        app.enter_viewing(&store);
+
+        assert!(matches!(app.mode, AppMode::Viewing));
+        assert!(app.viewing_search_query.is_empty());
+        assert!(app.viewing_match_indices().is_empty());
+        assert_eq!(app.viewing_selected_msg, 0);
+    }
+
+    #[test]
+    fn viewing_session_summary_counts_messages_duration_and_tokens() {
+        let messages = vec![
+            message(Role::User, Some(0), 0),
+            message(Role::Assistant, Some(120_000), 1),
+            message(Role::User, None, 2),
+        ];
+        let usage_events = vec![usage_event(10, 5), usage_event(-1, 4)];
+
+        let summary = ViewingSessionSummary::from_session(&messages, None, &usage_events);
+
+        assert_eq!(summary.user_messages, 2);
+        assert_eq!(summary.total_messages, 3);
+        assert_eq!(summary.duration_minutes, Some(2));
+        assert_eq!(summary.usage_events, 2);
+        assert_eq!(summary.tokens.input_tokens, 10);
+        assert_eq!(summary.tokens.output_tokens, 9);
+        assert_eq!(summary.tokens.cache_read_tokens, 6);
+        assert_eq!(summary.tokens.cache_write_tokens, 4);
+        assert_eq!(summary.tokens.reasoning_tokens, 2);
+        assert_eq!(summary.tokens.total_tokens, 31);
+    }
+
+    #[test]
+    fn ctrl_o_from_search_confirms_codex_app_open() {
+        crate::db::schema::register_sqlite_vec();
+        let store = Store::open_in_memory().unwrap();
+        let mut app = app_with_sources();
+        app.results = vec![codex_search_result()];
+
+        app.handle_search_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL), &store);
+
+        assert!(matches!(app.mode, AppMode::ConfirmResume));
+        let pending = app.pending_resume.as_ref().unwrap();
+        assert!(matches!(pending.action, PendingCommandAction::OpenApp));
+        assert!(
+            pending
+                .command
+                .args
+                .iter()
+                .any(|arg| arg == "codex://threads/019e6d8d-588b-7fd2-a326-c525469ed120")
+        );
+    }
+
+    #[test]
+    fn imported_session_suppresses_resume_and_app_open() {
+        crate::db::schema::register_sqlite_vec();
+        let store = Store::open_in_memory().unwrap();
+        let mut app = app_with_sources();
+        let mut result = codex_search_result();
+        result.session.is_import = true;
+        app.results = vec![result];
+
+        for key_char in ['r', 'o'] {
+            app.status_message = None;
+            app.handle_search_key(
+                KeyEvent::new(KeyCode::Char(key_char), KeyModifiers::CONTROL),
+                &store,
+            );
+
+            assert!(
+                !matches!(app.mode, AppMode::ConfirmResume),
+                "ctrl+{key_char} must not open confirmation for imported session"
+            );
+            assert!(app.pending_resume.is_none());
+            assert!(
+                app.status_message.as_deref().unwrap_or_default().contains("Imported"),
+                "status message must explain why nothing happened"
+            );
+        }
+    }
+
+    #[test]
+    fn imported_session_can_handoff_from_detail_view() {
+        let mut app = app_with_sources();
+        let mut result = codex_search_result();
+        result.session.is_import = true;
+        app.results = vec![result];
+        app.viewing_messages = vec![message(Role::User, None, 0)];
+        app.mode = AppMode::Viewing;
+
+        app.handle_viewing_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+        assert!(matches!(app.mode, AppMode::HandoffTarget));
+
+        app.handle_handoff_target_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert!(matches!(app.mode, AppMode::ConfirmResume));
+        let pending = app.pending_resume.as_ref().unwrap();
+        assert_eq!(pending.action, PendingCommandAction::Handoff);
+        assert_eq!(pending.command.program, "codex");
+        assert!(pending.command.args[0].contains("This is a handoff, not a native resume."));
+    }
+
+    #[test]
+    fn confirming_source_picker_preserves_existing_multi_source_selection() {
+        let mut app = app_with_sources();
+        app.source_filter_selection = vec!["claude".to_string(), "cursor".to_string()];
+
+        app.open_source_picker();
+        app.commit_source_picker_filter();
+
+        assert_eq!(app.source_filter_selection, vec!["claude".to_string(), "cursor".to_string()]);
+    }
+
+    #[test]
+    fn project_picker_filters_by_path_tokens() {
+        let mut app = app_with_sources();
+        app.project_directories = vec![
+            ProjectDirectory {
+                directory: "/Users/x/git/samzong/Recall".to_string(),
+                sessions: 10,
+                last_seen: 2,
+            },
+            ProjectDirectory {
+                directory: "/Users/x/git/openclaw".to_string(),
+                sessions: 20,
+                last_seen: 1,
+            },
+        ];
+        app.project_picker_query = "sam recall".to_string();
+
+        let rows = app.project_picker_rows();
+
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(rows[0], ProjectPickerRow::Project(0)));
+    }
+
+    #[test]
+    fn repo_filter_for_dir_resolves_remote_repo() {
+        let root =
+            std::env::temp_dir().join(format!("recall-repo-filter-{}", uuid::Uuid::new_v4()));
+        let nested = root.join("a").join("b");
+        std::fs::create_dir_all(&nested).unwrap();
+        Command::new("git").arg("init").current_dir(&root).output().unwrap();
+        Command::new("git")
+            .args(["remote", "add", "origin", "git@github.com:samzong/Recall.git"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+
+        let resolved = repo_filter_for_dir(&nested);
+
+        assert_eq!(resolved, Some(RepoFilter::Remote("github.com/samzong/Recall".to_string())));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn search_filters_include_repo_filter() {
+        let mut app = app_with_sources();
+        app.repo_filter = Some(RepoFilter::Remote("github.com/samzong/Recall".to_string()));
+
+        let filters = app.search_filters();
+
+        assert_eq!(filters.directory, None);
+        assert_eq!(filters.repo, app.repo_filter);
+    }
+
+    #[test]
+    fn project_picker_space_toggles_pending_selection_without_committing() {
+        let mut app = app_with_sources();
+        app.project_directories = vec![ProjectDirectory {
+            directory: "/Users/x/git/samzong/Recall".to_string(),
+            sessions: 10,
+            last_seen: 2,
+        }];
+        app.project_picker_query = "recall".to_string();
+
+        app.toggle_project_picker_row();
+
+        assert_eq!(app.project_picker_selection, Some("/Users/x/git/samzong/Recall".to_string()));
+        assert!(app.project_picker_dirty);
+        assert_eq!(app.project_filter, None);
+    }
+
+    #[test]
+    fn source_picker_space_toggles_while_filtering() {
+        let mut app = app_with_sources();
+        app.source_picker_query = "cod".to_string();
+        app.source_picker_typing = true;
+
+        app.toggle_source_picker_row();
+        app.commit_source_picker_filter();
+
+        assert_eq!(app.draft_source_filter_selection, vec!["codex".to_string()]);
+        assert!(app.source_filter_selection.is_empty());
+    }
+
+    #[test]
+    fn app_defaults_to_newest_sort() {
+        crate::db::schema::register_sqlite_vec();
+        let store = Store::open_in_memory().unwrap();
+        let app = App::new(&store, vec![source("codex", "Codex")], AppConfig::default());
+
+        assert_eq!(app.sort_order, SortOrder::Newest);
+    }
+
+    #[test]
+    fn clear_filters_restores_newest_sort() {
+        let mut app = app_with_sources();
+        app.sort_order = SortOrder::Relevance;
+        app.open_filters();
+
+        app.clear_filters();
+
+        assert_eq!(app.sort_order, SortOrder::Relevance);
+        assert_eq!(app.draft_sort_order, SortOrder::Newest);
+        assert!(app.filters_dirty);
+    }
+
+    #[test]
+    fn newest_sort_uses_latest_activity() {
+        let app = app_with_sources();
+        let mut results = vec![
+            search_result_with_times("stale-newer-start", 900, Some(900)),
+            search_result_with_times("active-older-start", 100, Some(1000)),
+        ];
+
+        app.apply_sort(&mut results);
+
+        assert_eq!(results[0].session.source_id, "active-older-start");
+        assert_eq!(results[1].session.source_id, "stale-newer-start");
+    }
+
+    #[test]
+    fn stale_search_response_does_not_replace_current_results() {
+        crate::db::schema::register_sqlite_vec();
+        let store = Store::open_in_memory().unwrap();
+        let mut app = app_with_sources();
+        app.query = "current".to_string();
+        app.results = vec![search_result_with_times("current-result", 100, None)];
+        app.active_search_id = 2;
+
+        app.apply_search_response(
+            &store,
+            SearchResponse {
+                id: 1,
+                query: "old".to_string(),
+                phase: SearchPhase::Text,
+                result: Ok(vec![search_result_with_times("old-result", 200, None)]),
+            },
+        );
+
+        assert_eq!(app.results[0].session.source_id, "current-result");
+    }
+
+    #[test]
+    fn text_search_response_keeps_semantic_refinement_pending() {
+        crate::db::schema::register_sqlite_vec();
+        let store = Store::open_in_memory().unwrap();
+        let mut app = app_with_sources();
+        app.query = "parser".to_string();
+        app.active_search_id = 1;
+        app.semantic_progress.done_sessions = 1;
+
+        app.apply_search_response(
+            &store,
+            SearchResponse {
+                id: 1,
+                query: "parser".to_string(),
+                phase: SearchPhase::Text,
+                result: Ok(vec![search_result_with_times("fts-result", 100, None)]),
+            },
+        );
+
+        assert_eq!(app.results[0].session.source_id, "fts-result");
+        assert!(app.search_in_flight);
+        assert_eq!(app.search_feedback.as_deref(), Some("Refining semantic results..."));
+    }
+
+    #[test]
+    fn filter_time_range_left_right_defers_search_until_esc() {
+        crate::db::schema::register_sqlite_vec();
+        let store = Store::open_in_memory().unwrap();
+        let mut app = app_with_sources();
+        app.mode = AppMode::Filters;
+        app.query = "parser".to_string();
+        app.filter_focus = FilterFocus::Time;
+
+        app.handle_filters_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), &store);
+
+        assert_eq!(app.time_filter, TimeRange::All);
+        assert!(app.filters_dirty);
+        assert!(!app.search_pending);
+        assert!(matches!(app.mode, AppMode::Filters));
+
+        app.handle_filters_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &store);
+
+        assert_eq!(app.time_filter, TimeRange::Today);
+        assert!(matches!(app.mode, AppMode::Search));
+        assert!(app.search_pending);
+        assert_eq!(app.search_feedback.as_deref(), Some("Filters queued..."));
+    }
+
+    #[test]
+    fn filter_sort_left_right_defers_search_until_esc() {
+        crate::db::schema::register_sqlite_vec();
+        let store = Store::open_in_memory().unwrap();
+        let mut app = app_with_sources();
+        app.mode = AppMode::Filters;
+        app.query = "parser".to_string();
+        app.filter_focus = FilterFocus::Sort;
+
+        app.handle_filters_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), &store);
+
+        assert_eq!(app.sort_order, SortOrder::Newest);
+        assert!(app.filters_dirty);
+        assert!(!app.search_pending);
+
+        app.handle_filters_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &store);
+
+        assert_eq!(app.sort_order, SortOrder::Relevance);
+        assert!(matches!(app.mode, AppMode::Search));
+        assert!(app.search_pending);
+        assert_eq!(app.search_feedback.as_deref(), Some("Filters queued..."));
+    }
+
+    #[test]
+    fn filter_esc_closes_without_syncing_results_or_stats() {
+        crate::db::schema::register_sqlite_vec();
+        let store = Store::open_in_memory().unwrap();
+        let mut app = app_with_sources();
+        app.mode = AppMode::Filters;
+        app.filter_focus = FilterFocus::Time;
+        app.results = vec![search_result_with_times("existing", 100, None)];
+        app.total_sessions = 42;
+        app.total_messages = 99;
+
+        app.handle_filters_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), &store);
+        app.handle_filters_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &store);
+
+        assert!(matches!(app.mode, AppMode::Search));
+        assert_eq!(app.results[0].session.source_id, "existing");
+        assert_eq!(app.total_sessions, 42);
+        assert_eq!(app.total_messages, 99);
+        assert!(app.search_pending);
+        assert_eq!(app.search_feedback.as_deref(), Some("Filters queued..."));
+    }
+
+    #[test]
+    fn filter_commit_invalidates_in_flight_search_response() {
+        crate::db::schema::register_sqlite_vec();
+        let store = Store::open_in_memory().unwrap();
+        let mut app = app_with_sources();
+        app.query = "parser".to_string();
+        app.mode = AppMode::Filters;
+        app.filter_focus = FilterFocus::Time;
+        app.results = vec![search_result_with_times("current-result", 100, None)];
+        app.search_request_id = 1;
+        app.active_search_id = 1;
+        app.search_in_flight = true;
+
+        app.handle_filters_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), &store);
+        app.handle_filters_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &store);
+        app.apply_search_response(
+            &store,
+            SearchResponse {
+                id: 1,
+                query: "parser".to_string(),
+                phase: SearchPhase::Text,
+                result: Ok(vec![search_result_with_times("old-filter-result", 200, None)]),
+            },
+        );
+
+        assert_eq!(app.results[0].session.source_id, "current-result");
+        assert!(app.search_pending);
+    }
+
+    #[test]
+    fn applying_project_picker_returns_to_filter_overview_without_searching() {
+        let mut app = app_with_sources();
+        app.mode = AppMode::Filters;
+        app.filters_editing_project = true;
+        app.project_picker_selection = Some("/Users/x/git/samzong/Recall".to_string());
+        app.project_picker_dirty = true;
+
+        app.apply_project_picker();
+
+        assert!(matches!(app.mode, AppMode::Filters));
+        assert!(!app.filters_editing_project);
+        assert_eq!(app.project_filter, None);
+        assert_eq!(app.draft_project_filter, Some("/Users/x/git/samzong/Recall".to_string()));
+        assert!(app.filters_dirty);
+        assert!(!app.search_pending);
+    }
+
+    #[test]
+    fn applying_source_picker_returns_to_filter_overview_without_searching() {
+        let mut app = app_with_sources();
+        app.mode = AppMode::Filters;
+        app.filters_editing_source = true;
+        app.source_picker_selection = vec!["codex".to_string()];
+        app.source_picker_dirty = true;
+
+        app.apply_source_picker();
+
+        assert!(matches!(app.mode, AppMode::Filters));
+        assert!(!app.filters_editing_source);
+        assert!(app.source_filter_selection.is_empty());
+        assert_eq!(app.draft_source_filter_selection, vec!["codex".to_string()]);
+        assert!(app.filters_dirty);
+        assert!(!app.search_pending);
     }
 }

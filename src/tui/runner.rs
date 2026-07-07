@@ -8,7 +8,7 @@ use crate::semantic;
 use crate::sync::run_dashboard_sync_job;
 use crate::tui::search_worker::SearchWorker;
 
-pub fn run(usage_start: Option<(Option<Vec<String>>, Option<TimeRange>)>) -> Result<()> {
+pub(crate) fn run(usage_start: Option<(Option<Vec<String>>, Option<TimeRange>)>) -> Result<()> {
     use std::io;
     use std::time::Duration;
 
@@ -19,8 +19,9 @@ pub fn run(usage_start: Option<(Option<Vec<String>>, Option<TimeRange>)>) -> Res
     use ratatui::Terminal;
     use ratatui::backend::CrosstermBackend;
 
-    use crate::tui::app::{App, AppMode};
+    use crate::tui::app::App;
     use crate::tui::event::{AppEvent, poll_event};
+    use crate::tui::share_state::AppMode;
     use crate::tui::ui;
 
     let usage_mode = usage_start.is_some();
@@ -72,12 +73,15 @@ pub fn run(usage_start: Option<(Option<Vec<String>>, Option<TimeRange>)>) -> Res
         }
         terminal.draw(|f| ui::render(f, &app))?;
 
+        let size = terminal.size()?;
+        app.set_terminal_size(size.width, size.height);
         match poll_event(tick_rate)? {
-            AppEvent::Key(key) => {
-                app.handle_key(key, &store);
+            AppEvent::Key(key) => app.handle_key(key, &store),
+            AppEvent::MouseDown { column, row } => app.handle_mouse_down(column, row, &store),
+            AppEvent::ScrollUp { column, row } => app.handle_mouse_scroll_up(column, row, &store),
+            AppEvent::ScrollDown { column, row } => {
+                app.handle_mouse_scroll_down(column, row, &store);
             }
-            AppEvent::ScrollUp => app.handle_scroll_up(&store),
-            AppEvent::ScrollDown => app.handle_scroll_down(&store),
             AppEvent::Tick => {}
         }
 

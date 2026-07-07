@@ -14,7 +14,7 @@ Create `src/adapters/<tool>.rs`:
 use crate::adapters::{RawMessage, RawSession, SourceAdapter};
 use crate::types::Role;
 
-pub struct MyToolAdapter;
+pub(crate) struct MyToolAdapter;
 
 impl SourceAdapter for MyToolAdapter {
     fn id(&self) -> &str { "my-tool" }       // stored in DB, used for filtering
@@ -63,11 +63,11 @@ impl SourceAdapter for MyToolAdapter {
 In `src/adapters/mod.rs`, add two lines:
 
 ```rust
-pub mod my_tool;  // add module declaration
+pub(crate) mod my_tool;  // add module declaration
 ```
 
 ```rust
-pub fn all_adapters() -> Vec<Box<dyn SourceAdapter>> {
+pub(crate) fn all_adapters() -> Vec<Box<dyn SourceAdapter>> {
     vec![
         Box::new(claude_code::ClaudeCodeAdapter),
         Box::new(opencode::OpenCodeAdapter),
@@ -175,6 +175,15 @@ CI runs `make check` — the same single command you run locally. There is no se
 make check = cargo fmt --check → cargo clippy → cargo test
 ```
 
+Regression and eval harness tests live in `src/integration/` inside the library crate. Run them with:
+
+```bash
+cargo test integration::regression
+cargo test integration::eval_harness
+```
+
+The former standalone targets `cargo test --test regression` and `cargo test --test eval_harness` are no longer used.
+
 Always run `make check` before pushing. If it passes locally, CI will pass.
 
 ## Releases
@@ -183,6 +192,9 @@ Releases are driven by `cargo-release`, which bumps `Cargo.toml`, updates
 `Cargo.lock`, commits, tags, and pushes in one step. The GitHub Actions
 release workflow triggers on `v*` tag push and builds cross-platform
 binaries.
+
+Recall is not published to crates.io. `publish = false` in `Cargo.toml` is the
+current application release boundary, not a package metadata bug.
 
 ### One-time setup
 
@@ -204,20 +216,6 @@ make release-patch EXECUTE=1    # apply: bump, commit, tag, push
 
 `release-minor` and `release-major` work the same way. The tag name is
 `v{{version}}` and the commit subject is `chore(release): bump to v{{version}}`.
-
-### Update Homebrew tap
-
-After the GitHub release assets are published, run the project skill to update
-`samzong/homebrew-tap`:
-
-```bash
-/skill:update-recall-homebrew-tap
-```
-
-The skill lives in `.agents/skills/update-recall-homebrew-tap/` so shared
-agent-skill tooling can discover it. It reads the current `Cargo.toml` version,
-verifies the matching GitHub release assets, updates `Formula/recall.rb`
-checksums, and opens a tap PR.
 
 ### First release after a stale baseline
 

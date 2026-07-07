@@ -1,13 +1,13 @@
-use recall::adapters::copilot::parse_copilot_events;
-use recall::adapters::gemini::parse_gemini_session;
-use recall::adapters::kiro::parse_kiro_conversation;
-use recall::config::AppConfig;
-use recall::db::schema;
-use recall::db::search::{RepoFilter, SearchEngine, SearchFilters, TimeRange};
-use recall::db::store::Store;
-use recall::export::{ExportOptions, write_jsonl};
-use recall::types::{Message, RawSessionEvent, RawUsageEvent, Role, Session, TokenSource};
-use recall::usage::{UsageFilters, build_usage_report};
+use crate::adapters::copilot::parse_copilot_events;
+use crate::adapters::gemini::parse_gemini_session;
+use crate::adapters::kiro::parse_kiro_conversation;
+use crate::config::AppConfig;
+use crate::db::schema;
+use crate::db::search::{RepoFilter, SearchEngine, SearchFilters, TimeRange};
+use crate::db::store::Store;
+use crate::export::{ExportOptions, write_jsonl};
+use crate::types::{Message, RawSessionEvent, RawUsageEvent, Role, Session, TokenSource};
+use crate::usage::{UsageFilters, build_usage_report};
 
 fn setup() -> Store {
     schema::register_sqlite_vec();
@@ -694,7 +694,7 @@ fn role_fromstr() {
 
 #[test]
 fn format_age_values() {
-    use recall::utils::format_age;
+    use crate::utils::format_age;
 
     let now = chrono::Utc::now().timestamp_millis();
     assert_eq!(format_age(now), "<1h");
@@ -705,7 +705,7 @@ fn format_age_values() {
 
 #[test]
 fn f32_slice_to_bytes_roundtrip() {
-    use recall::utils::f32_slice_to_bytes;
+    use crate::utils::f32_slice_to_bytes;
 
     let original = vec![1.0f32, 2.5, -3.0, 0.0];
     let bytes = f32_slice_to_bytes(&original);
@@ -1168,16 +1168,16 @@ fn config_drops_obsolete_disabled_entries() {
 
 #[test]
 fn reflect_empty_scope_returns_coverage_note() {
-    use recall::db::search::TimeRange;
+    use crate::db::search::TimeRange;
 
     let store = setup();
-    let filters = recall::reflect::ReflectFilters {
+    let filters = crate::reflect::ReflectFilters {
         sources: None,
         time_range: TimeRange::All,
         directory: None,
         repo: None,
     };
-    let report = recall::reflect::build_reflect_report(&store, &filters).unwrap();
+    let report = crate::reflect::build_reflect_report(&store, &filters).unwrap();
 
     assert_eq!(report.coverage_note.as_deref(), Some("No sessions matched the reflect scope."),);
     assert_eq!(report.summary.sessions, 0);
@@ -1220,7 +1220,7 @@ fn make_message_at(
 
 #[test]
 fn reflect_builds_timeline_across_sessions() {
-    use recall::db::search::TimeRange;
+    use crate::db::search::TimeRange;
 
     let store = setup();
 
@@ -1241,13 +1241,13 @@ fn reflect_builds_timeline_across_sessions() {
     store.insert_messages(&msgs1).unwrap();
     store.insert_messages(&msgs2).unwrap();
 
-    let filters = recall::reflect::ReflectFilters {
+    let filters = crate::reflect::ReflectFilters {
         sources: None,
         time_range: TimeRange::All,
         directory: None,
         repo: None,
     };
-    let report = recall::reflect::build_reflect_report(&store, &filters).unwrap();
+    let report = crate::reflect::build_reflect_report(&store, &filters).unwrap();
 
     assert_eq!(report.summary.sessions, 2);
     assert_eq!(report.summary.timeline_moments, 4);
@@ -1296,7 +1296,7 @@ fn reflect_builds_timeline_across_sessions() {
 
 #[test]
 fn reflect_chunks_long_sessions_before_project_summary() {
-    use recall::db::search::TimeRange;
+    use crate::db::search::TimeRange;
 
     let store = setup();
     let session = make_session_at("s1", "codex", "raw1", "Long session", 1000);
@@ -1315,13 +1315,13 @@ fn reflect_chunks_long_sessions_before_project_summary() {
     }
     store.insert_messages(&messages).unwrap();
 
-    let filters = recall::reflect::ReflectFilters {
+    let filters = crate::reflect::ReflectFilters {
         sources: None,
         time_range: TimeRange::All,
         directory: None,
         repo: None,
     };
-    let report = recall::reflect::build_reflect_report(&store, &filters).unwrap();
+    let report = crate::reflect::build_reflect_report(&store, &filters).unwrap();
 
     assert!(
         report.chunks.len() > 1,
@@ -1338,7 +1338,7 @@ fn reflect_chunks_long_sessions_before_project_summary() {
 
 #[test]
 fn reflect_scope_pattern_is_discussion_prompt_only() {
-    use recall::db::search::TimeRange;
+    use crate::db::search::TimeRange;
 
     let store = setup();
 
@@ -1359,13 +1359,13 @@ fn reflect_scope_pattern_is_discussion_prompt_only() {
     store.insert_messages(&msgs1).unwrap();
     store.insert_messages(&msgs2).unwrap();
 
-    let filters = recall::reflect::ReflectFilters {
+    let filters = crate::reflect::ReflectFilters {
         sources: None,
         time_range: TimeRange::All,
         directory: None,
         repo: None,
     };
-    let report = recall::reflect::build_reflect_report(&store, &filters).unwrap();
+    let report = crate::reflect::build_reflect_report(&store, &filters).unwrap();
 
     assert_eq!(
         report.observed_patterns.len(),
@@ -1392,8 +1392,8 @@ fn reflect_scope_pattern_is_discussion_prompt_only() {
 
 #[test]
 fn reflect_text_output_is_timeline_first() {
-    use recall::db::search::TimeRange;
-    use recall::reflect;
+    use crate::db::search::TimeRange;
+    use crate::reflect;
 
     let store = setup();
 
@@ -1433,8 +1433,8 @@ fn reflect_text_output_is_timeline_first() {
 
 #[test]
 fn reflect_excludes_low_level_transcript_logs_by_default() {
-    use recall::db::search::TimeRange;
-    use recall::reflect;
+    use crate::db::search::TimeRange;
+    use crate::reflect;
 
     let store = setup();
 
@@ -1555,8 +1555,8 @@ fn reflect_excludes_low_level_transcript_logs_by_default() {
 
 #[test]
 fn reflect_sanitizes_inline_tool_artifacts() {
-    use recall::db::search::TimeRange;
-    use recall::reflect;
+    use crate::db::search::TimeRange;
+    use crate::reflect;
 
     let store = setup();
 
