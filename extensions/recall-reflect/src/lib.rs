@@ -1,1 +1,2 @@
-pub mod manifest;
+#[cfg(test)]
+mod manifest;

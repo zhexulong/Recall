@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
-use recall_reflect::manifest;
+
+mod manifest;
 
 #[derive(Parser)]
 #[command(name = "recall-reflect", version, about = "Reflect on Recall session history")]
