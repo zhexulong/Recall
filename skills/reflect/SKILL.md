@@ -7,7 +7,7 @@ description: Use Recall Reflect to review AI coding workflow history as a conver
 
 ## Overview
 
-Reflect is a discussion-first workflow for reviewing AI coding sessions through Recall. It reconstructs a conversation-first timeline across sessions and surfaces observed patterns as questions for the user, not as automatic conclusions or edits.
+Reflect is the official `recall-reflect` Recall extension. It is a discussion-first workflow for reviewing AI coding sessions through Recall's stable CLI JSON and JSONL protocol. The extension reconstructs a conversation-first timeline across sessions and surfaces observed patterns as questions for the user, not as automatic conclusions or edits.
 
 Use this skill when the user wants project-level reflection on AI coding process, workflow friction, handoffs, repeated corrections, scope drift, or possible future calibration.
 
@@ -25,10 +25,16 @@ Scope to the current repo unless the user asks otherwise. Resolve the project di
 git rev-parse --show-toplevel
 ```
 
-Run Reflect with structured output:
+Run Reflect with structured output. Prefer user-facing dispatch when the extension is installed and managed by Recall:
 
 ```bash
 recall reflect --project /absolute/project/path --format json
+```
+
+Direct extension invocation is also acceptable when testing or calling the extension binary explicitly:
+
+```bash
+recall-reflect --project /absolute/project/path --format json
 ```
 
 Add `--time 30d` or `--source <source>` when the user narrows the review. Use `--sync` when recent sessions may not be indexed yet.
@@ -41,6 +47,8 @@ Add `--time 30d` or `--source <source>` when the user narrows the review. Use `-
    - Explain the scope briefly if there may be multiple worktrees or project directories.
 
 2. Run Reflect.
+   - Prefer `recall reflect ...` when Recall can dispatch to the installed extension.
+   - Use `recall-reflect ...` for direct testing or explicit extension invocation.
    - Prefer JSON for structured inspection.
    - Use text output only when the user wants a human-readable report directly.
 
@@ -85,6 +93,7 @@ recall reflect --project /absolute/project/path --time 30d --format json
 recall reflect --project /absolute/project/path --source codex --format json
 recall reflect --project /absolute/project/path --sync --format json
 recall reflect --project /absolute/project/path --format text
+recall-reflect --project /absolute/project/path --format json
 ```
 
 Supported time filters are `today`, `7d` or `week`, and `30d` or `month`. Unknown time values fall back to all history.

@@ -1,23 +1,25 @@
-# Reflect PRD
+# recall-reflect PRD
 
 ## Goal
 
-Add a project-level reflection workflow so Recall can turn local AI coding
-history into a clean timeline of human intent, agent response, corrections, and
+Define the official Reflect extension so Recall can turn local AI coding history
+into a clean timeline of human intent, agent response, corrections, and
 follow-up work.
+
+Reflect is designed as the official `recall-reflect` extension. Recall core provides session data through the stable CLI JSON/JSONL protocol; the extension owns timeline reconstruction, observed pattern prompts, and future discussion/calibration workflow.
 
 The primary workflow is:
 
 1. A user or coding agent selects a repository root or repository identity.
-2. Recall finds relevant local sessions for that project.
-3. Recall reconstructs a conversation-first timeline across those sessions.
-4. Recall surfaces observed workflow patterns as discussion prompts.
+2. Recall core finds relevant local sessions for that project.
+3. `recall-reflect` reconstructs a conversation-first timeline across those sessions.
+4. `recall-reflect` surfaces observed workflow patterns as discussion prompts.
 5. The user decides whether any pattern should become a workflow, skill, agent,
    or instruction-file change.
-6. If the user approves, Recall can prepare an explicit proposal or patch for a
+6. If the user approves, the extension can prepare an explicit proposal or patch for a
    later apply step.
 
-Reflect is not only a report. The complete product direction is a reflection and
+Reflect is not only a report. The complete product direction is an extension-led reflection and
 calibration loop: inspect the timeline, discuss what the timeline means, propose
 changes only after user confirmation, and later compare new sessions against
 accepted changes.
@@ -50,8 +52,9 @@ changed direction, and which behaviors might be worth preserving or changing.
 
 ## Definitions
 
-- **Reflect**: a project-level workflow that reconstructs a timeline, surfaces
-  patterns for discussion, and can later produce user-approved change proposals.
+- **Reflect**: the official `recall-reflect` extension, a project-level workflow
+  that reconstructs a timeline, surfaces patterns for discussion, and can later
+  produce user-approved change proposals.
 - **Project timeline**: a chronological narrative built from multiple sessions
   that belong to the same repository or project scope.
 - **Conversation-first timeline**: a timeline focused on user inputs, agent
@@ -71,8 +74,8 @@ changed direction, and which behaviors might be worth preserving or changing.
 
 ### In Scope
 
-- Add a project-level reflect workflow scoped by repository root or repository
-  identity.
+- Add an official reflect extension workflow scoped by repository root or
+  repository identity.
 - Reconstruct a timeline across relevant local sessions.
 - Keep the default narrative conversation-first: user messages, assistant
   responses, titles, summaries, timestamps, and source/project metadata.
@@ -97,23 +100,31 @@ changed direction, and which behaviors might be worth preserving or changing.
 
 ## Product Model
 
-Reflect has five product layers. They describe the complete capability; an
+Reflect has five product layers. They describe the complete extension capability; an
 implementation can deliver them incrementally.
 
 ### 1. Timeline Reconstruction
 
-The user-facing input should stay simple. The common command should be based on
-the current repository or an explicit repository root:
+The user-facing input should stay simple. The common command should be Recall's
+extension dispatch, based on the current repository or an explicit repository
+root:
 
 ```bash
 recall reflect --project /path/to/repo
 recall reflect --repo owner/repo
 ```
 
-Internally, Recall can use indexed session metadata, messages, timestamps,
-source information, summaries, usage records, and event records to build the
-timeline. These internal inputs should not make the user-facing command feel
-complex.
+Direct extension invocation is acceptable for testing and development:
+
+```bash
+recall-reflect --project /path/to/repo
+recall-reflect --repo owner/repo
+```
+
+Internally, the extension consumes indexed session metadata, messages,
+timestamps, source information, summaries, usage records, and event records
+through Recall's stable CLI protocol. These inputs should not make the
+user-facing command feel complex.
 
 The output of this layer is a chronological project narrative. Sessions are
 evidence sources, but the top-level structure is time.
@@ -126,7 +137,7 @@ the default report should stay within a readable and reviewable size.
 
 ### 2. Conversation Reflection
 
-Recall then looks for workflow patterns in the clean conversation timeline:
+The extension then looks for workflow patterns in the clean conversation timeline:
 
 - work continuing across sessions or tools;
 - agent output becoming the next prompt or direction;
@@ -146,7 +157,7 @@ moments?
 
 ### 3. User-Guided Calibration
 
-Recall should not convert every observation into a rule. The user confirms which
+The extension should not convert every observation into a rule. The user confirms which
 patterns matter.
 
 The calibration step turns an observed pattern into a target only after user
@@ -163,12 +174,12 @@ What should Recall do with this?
 4. Draft an agent/skill/instruction change.
 ```
 
-This keeps Reflect discussion-first. Recall helps surface patterns; the user
+This keeps Reflect discussion-first. The extension helps surface patterns; the user
 decides whether they are real, useful, or actionable.
 
 ### 4. Proposal Generation
 
-After confirmation, Recall can generate reviewable proposals. Proposal types may
+After confirmation, the extension can generate reviewable proposals. Proposal types may
 include:
 
 - **Workflow proposal**: a new repeatable process or checkpoint.
@@ -190,7 +201,7 @@ Each proposal should explain:
 ### 5. Apply, Track, And Re-Reflect
 
 The complete loop does not end at proposal generation. If a user accepts a
-proposal, Recall should be able to track that calibration and revisit it later.
+proposal, the extension should be able to track that calibration and revisit it later.
 
 Future reflection can then answer:
 
@@ -206,7 +217,7 @@ for AI-assisted development.
 
 ### `recall reflect`
 
-Reflect on the current or selected project timeline.
+Reflect on the current or selected project timeline through Recall's extension dispatch.
 
 ```bash
 recall reflect
@@ -363,11 +374,11 @@ recall reflect apply --proposal <proposal-id> --dry-run
 ## Relationship To Existing Skill Workflows
 
 Some agent skill systems already encode behavior learned from repeated AI coding
-friction. Reflect should treat those systems as possible calibration targets,
+friction. The extension should treat those systems as possible calibration targets,
 not as required dependencies.
 
 For example, a user might use reflection to decide that a recurring pattern
-should become a new workflow, a skill change, or an instruction-file rule. Recall
+should become a new workflow, a skill change, or an instruction-file rule. The extension
 should help prepare that proposal, but the user remains responsible for deciding
 whether to adopt it.
 
