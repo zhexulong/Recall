@@ -8,7 +8,7 @@ repository = "https://github.com/samzong/Recall"
 publish = false
 
 [workspace]
-members = [".", "extensions/recall-probe"]
+members = [".", "extensions/recall-probe", "extensions/recall-reflect"]
 default-members = ["."]
 resolver = "2"
 

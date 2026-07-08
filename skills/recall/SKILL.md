@@ -26,6 +26,7 @@ Pick the workflow from user intent. Do not run the full project-review scoping f
 | Resume or open | "继续这个会话", "resume this chat" | Session Resume/Open |
 | Find one session | "找上次讨论 migration 的会话", "当前项目最新 grok 会话" | Latest/Find Session Lookup |
 | Review project history | "用 recall 审查这个项目", "历史风险" | Scoping Protocol + Analysis Modes |
+| Reflect on AI coding workflow | "reflect on this project", "review my AI coding workflow", "timeline reflection", "workflow friction", "calibration discussion" | Route to the `reflect` skill |
 
 Treat "share" and "update/refresh share link" as the same action: sync the latest transcript, publish to Pages, return the live URL.
 
@@ -223,6 +224,10 @@ Recall review of <project>:
 ```
 
 Keep transcript content summarized. Quote only short excerpts when they are necessary evidence.
+
+## Reflect Routing
+
+When the user wants project-level reflection on their AI coding process, workflow friction, handoffs, repeated corrections, or possible future calibration, route to the installed `reflect` skill. Keep this `recall` skill focused on project memory lookup, sharing, export, and review workflows.
 
 ## Commands For Tool Calls
 
