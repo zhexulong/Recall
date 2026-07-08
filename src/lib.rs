@@ -10,7 +10,6 @@ pub(crate) mod handoff;
 pub(crate) mod import;
 pub(crate) mod info;
 pub(crate) mod query;
-pub(crate) mod reflect;
 pub(crate) mod repo_identity;
 pub(crate) mod semantic;
 pub(crate) mod session;
