@@ -457,7 +457,12 @@ mod tests {
                 fixture_message("user", "Please review the timeline design", 0, 1100),
                 fixture_message("assistant", "I will review the design at a high level", 1, 1200),
                 fixture_message("assistant", "[Bash] {\"command\":\"git status\"}", 2, 1300),
-                fixture_message("assistant", "[Read] {\"file_path\":\"docs/reflect.md\"}", 3, 1400),
+                fixture_message(
+                    "assistant",
+                    "[Read] {\"file_path\":\"docs/extensions/reflect.md\"}",
+                    3,
+                    1400,
+                ),
                 fixture_message("assistant", "[Write] {\"file_path\":\"x\"}", 4, 1500),
                 fixture_message(
                     "assistant",
@@ -526,7 +531,7 @@ mod tests {
             vec![
                 fixture_message(
                     "assistant",
-                    "I'll review the docs. [Read] {\"file_path\":\"docs/reflect.md\"}",
+                    "I'll review the docs. [Read] {\"file_path\":\"docs/extensions/reflect.md\"}",
                     0,
                     1100,
                 ),

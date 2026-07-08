@@ -121,10 +121,10 @@ recall-reflect --project /path/to/repo
 recall-reflect --repo owner/repo
 ```
 
-Internally, the extension consumes indexed session metadata, messages,
-timestamps, source information, summaries, usage records, and event records
-through Recall's stable CLI protocol. These inputs should not make the
-user-facing command feel complex.
+Internally, the extension consumes indexed session metadata and messages through
+Recall's stable CLI protocol with `recall export --include metadata,messages`.
+Future modes may opt into usage or event records only when they need that extra
+context. These inputs should not make the user-facing command feel complex.
 
 The output of this layer is a chronological project narrative. Sessions are
 evidence sources, but the top-level structure is time.

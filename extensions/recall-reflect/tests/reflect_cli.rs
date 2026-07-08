@@ -41,7 +41,9 @@ fn reflect_cli_reads_export_jsonl_from_recall_bin() {
     let calls = fake.calls();
     assert_eq!(
         calls,
-        ["export --limit 0 --project /tmp/repo --repo owner/repo --source codex --time week"]
+        [
+            "export --limit 0 --include metadata,messages --project /tmp/repo --repo owner/repo --source codex --time week"
+        ]
     );
 }
 
@@ -68,7 +70,10 @@ fn reflect_cli_syncs_selected_source_before_export() {
         calls,
         [
             "sync --source opencode",
-            &format!("export --limit 0 --project {} --source opencode", repo.path().display())
+            &format!(
+                "export --limit 0 --include metadata,messages --project {} --source opencode",
+                repo.path().display()
+            )
         ]
     );
 }
@@ -96,7 +101,13 @@ fn reflect_cli_defaults_unscoped_reflection_to_current_git_root() {
     assert_eq!(json["scope"]["project"], repo.path().display().to_string());
 
     let calls = fake.calls();
-    assert_eq!(calls, [format!("export --limit 0 --project {}", repo.path().display())]);
+    assert_eq!(
+        calls,
+        [format!(
+            "export --limit 0 --include metadata,messages --project {}",
+            repo.path().display()
+        )]
+    );
 }
 
 #[test]
@@ -138,7 +149,7 @@ fn reflect_cli_reports_recall_command_failures_on_stderr() {
     assert!(stderr.contains("boom"), "stderr: {stderr}");
 
     let calls = fake.calls();
-    assert_eq!(calls, ["export --limit 0 --project /tmp/repo"]);
+    assert_eq!(calls, ["export --limit 0 --include metadata,messages --project /tmp/repo"]);
 }
 
 struct TempDir {

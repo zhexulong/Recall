@@ -50,7 +50,13 @@ impl RecallClient {
     }
 
     pub fn export_sessions(&self, args: &ReflectArgs) -> Result<Vec<SourceSession>> {
-        let mut command_args = vec!["export".to_string(), "--limit".to_string(), "0".to_string()];
+        let mut command_args = vec![
+            "export".to_string(),
+            "--limit".to_string(),
+            "0".to_string(),
+            "--include".to_string(),
+            "metadata,messages".to_string(),
+        ];
         push_optional_arg(&mut command_args, "--project", args.project.as_deref());
         push_optional_arg(&mut command_args, "--repo", args.repo.as_deref());
         push_optional_arg(&mut command_args, "--source", args.source.as_deref());
