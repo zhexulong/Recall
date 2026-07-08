@@ -48,9 +48,12 @@ fn reflect_cli_reads_export_jsonl_from_recall_bin() {
 #[test]
 fn reflect_cli_syncs_selected_source_before_export() {
     let fake = FakeRecall::new(JSONL_FIXTURE, 0, "");
+    let repo = TempDir::new("recall-reflect-repo");
+    init_git_repo(repo.path());
 
     let output = Command::new(env!("CARGO_BIN_EXE_recall-reflect"))
         .env("RECALL_BIN", fake.script_path())
+        .current_dir(repo.path())
         .args(["--sync", "--source", "opencode"])
         .output()
         .unwrap();
@@ -61,7 +64,58 @@ fn reflect_cli_syncs_selected_source_before_export() {
     assert!(stdout.contains("Sessions: 1"));
 
     let calls = fake.calls();
-    assert_eq!(calls, ["sync --source opencode", "export --limit 0 --source opencode"]);
+    assert_eq!(
+        calls,
+        [
+            "sync --source opencode",
+            &format!("export --limit 0 --project {} --source opencode", repo.path().display())
+        ]
+    );
+}
+
+#[test]
+fn reflect_cli_defaults_unscoped_reflection_to_current_git_root() {
+    let fake = FakeRecall::new(JSONL_FIXTURE, 0, "");
+    let repo = TempDir::new("recall-reflect-repo");
+    init_git_repo(repo.path());
+    let nested = repo.path().join("nested").join("child");
+    fs::create_dir_all(&nested).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_recall-reflect"))
+        .env("RECALL_BIN", fake.script_path())
+        .current_dir(&nested)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(output.stderr.is_empty(), "stderr should be empty on success");
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["scope"]["project"], repo.path().display().to_string());
+
+    let calls = fake.calls();
+    assert_eq!(calls, [format!("export --limit 0 --project {}", repo.path().display())]);
+}
+
+#[test]
+fn reflect_cli_requires_explicit_scope_outside_git_worktree() {
+    let fake = FakeRecall::new(JSONL_FIXTURE, 0, "");
+    let non_git = TempDir::new("recall-reflect-non-git");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_recall-reflect"))
+        .env("RECALL_BIN", fake.script_path())
+        .current_dir(non_git.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "command should fail outside git without scope");
+    assert!(output.stdout.is_empty(), "stdout must be empty on scope errors");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--project") || stderr.contains("--repo"), "stderr: {stderr}");
+
+    assert!(fake.calls().is_empty(), "export must not run without an explicit or inferred scope");
 }
 
 #[test]
@@ -70,6 +124,8 @@ fn reflect_cli_reports_recall_command_failures_on_stderr() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_recall-reflect"))
         .env("RECALL_BIN", fake.script_path())
+        .arg("--project")
+        .arg("/tmp/repo")
         .arg("--format")
         .arg("json")
         .output()
@@ -82,7 +138,29 @@ fn reflect_cli_reports_recall_command_failures_on_stderr() {
     assert!(stderr.contains("boom"), "stderr: {stderr}");
 
     let calls = fake.calls();
-    assert_eq!(calls, ["export --limit 0"]);
+    assert_eq!(calls, ["export --limit 0 --project /tmp/repo"]);
+}
+
+struct TempDir {
+    path: PathBuf,
+}
+
+impl TempDir {
+    fn new(prefix: &str) -> Self {
+        let path = unique_temp_dir(prefix);
+        fs::create_dir_all(&path).unwrap();
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
 }
 
 struct FakeRecall {
@@ -93,7 +171,7 @@ struct FakeRecall {
 
 impl FakeRecall {
     fn new(export_stdout: &str, export_exit_code: i32, export_stderr: &str) -> Self {
-        let dir = unique_temp_dir();
+        let dir = unique_temp_dir("recall-reflect-test");
         fs::create_dir_all(&dir).unwrap();
         let script = dir.join("recall-fake.sh");
         let calls = dir.join("calls.txt");
@@ -143,9 +221,24 @@ impl Drop for FakeRecall {
     }
 }
 
-fn unique_temp_dir() -> PathBuf {
+fn unique_temp_dir(prefix: &str) -> PathBuf {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    std::env::temp_dir().join(format!("recall-reflect-test-{}-{nanos}", std::process::id()))
+    std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
+}
+
+fn init_git_repo(path: &Path) {
+    let output = Command::new("git")
+        .env("GIT_MASTER", "1")
+        .arg("init")
+        .arg("--quiet")
+        .current_dir(path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git init stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[cfg(unix)]
