@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-pub(crate) fn manifest_json() -> Value {
+pub fn manifest_json() -> Value {
     json!({
         "name": "reflect",
         "version": env!("CARGO_PKG_VERSION"),

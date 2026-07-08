@@ -6,9 +6,9 @@ use crate::model::{
 };
 use crate::patterns::detect_observed_patterns;
 
-pub(crate) const REFLECT_CHUNK_MOMENT_LIMIT: usize = 10;
+pub const REFLECT_CHUNK_MOMENT_LIMIT: usize = 10;
 
-pub(crate) fn build_reflect_report(
+pub fn build_reflect_report(
     sessions: Vec<SourceSession>,
     filters: &ReflectFilters,
 ) -> ReflectReport {

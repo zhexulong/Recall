@@ -3,7 +3,7 @@ use std::fmt::Write;
 use crate::model::ReflectReport;
 use crate::report::REFLECT_CHUNK_MOMENT_LIMIT;
 
-pub(crate) fn render_text(report: &ReflectReport) -> String {
+pub fn render_text(report: &ReflectReport) -> String {
     let mut out = String::new();
 
     let _ = writeln!(out, "Recall reflect");

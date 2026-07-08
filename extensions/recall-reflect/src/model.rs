@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ReflectFilters {
+pub struct ReflectFilters {
     pub sources: Option<Vec<String>>,
     pub time_range: String,
     pub directory: Option<String>,
@@ -9,7 +9,7 @@ pub(crate) struct ReflectFilters {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct SourceSession {
+pub struct SourceSession {
     pub id: String,
     pub source: String,
     pub title: String,
@@ -20,7 +20,7 @@ pub(crate) struct SourceSession {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct SourceMessage {
+pub struct SourceMessage {
     pub role: String,
     pub content: String,
     pub seq: u32,
@@ -28,7 +28,7 @@ pub(crate) struct SourceMessage {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct ReflectScope {
+pub struct ReflectScope {
     pub project: Option<String>,
     pub repo: Option<String>,
     pub time_range: String,
@@ -36,7 +36,7 @@ pub(crate) struct ReflectScope {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct ConversationChunk {
+pub struct ConversationChunk {
     pub id: String,
     pub session_id: String,
     pub start_at: i64,
@@ -46,14 +46,14 @@ pub(crate) struct ConversationChunk {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct ReflectSummary {
+pub struct ReflectSummary {
     pub sessions: usize,
     pub timeline_moments: usize,
     pub phases: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct TimelinePhase {
+pub struct TimelinePhase {
     pub id: String,
     pub title: String,
     pub start_at: i64,
@@ -63,7 +63,7 @@ pub(crate) struct TimelinePhase {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct TimelineMoment {
+pub struct TimelineMoment {
     pub id: String,
     pub timestamp: i64,
     pub source: String,
@@ -74,7 +74,7 @@ pub(crate) struct TimelineMoment {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct ObservedPattern {
+pub struct ObservedPattern {
     pub id: String,
     pub summary: String,
     pub timeline_moments: Vec<String>,
@@ -82,12 +82,12 @@ pub(crate) struct ObservedPattern {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct ReflectProposalStub {
+pub struct ReflectProposalStub {
     pub note: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct ReflectReport {
+pub struct ReflectReport {
     pub scope: ReflectScope,
     pub summary: ReflectSummary,
     pub chunks: Vec<ConversationChunk>,
