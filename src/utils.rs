@@ -39,10 +39,9 @@ pub(crate) fn parse_since(s: &str) -> Option<i64> {
         (n, 24 * 3600 * 1000i64)
     } else if let Some(n) = s.strip_suffix('w') {
         (n, 7 * 24 * 3600 * 1000i64)
-    } else if let Some(n) = s.strip_suffix('m') {
-        (n, 30 * 24 * 3600 * 1000i64)
     } else {
-        return None;
+        let n = s.strip_suffix('m')?;
+        (n, 30 * 24 * 3600 * 1000i64)
     };
     let n: i64 = num_str.parse().ok()?;
     let now = chrono::Utc::now().timestamp_millis();
