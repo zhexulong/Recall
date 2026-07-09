@@ -280,11 +280,14 @@ Recall reflect for <scope>:
 
 1. Scope summary
 2. Timeline
-3. Observed workflow patterns
-4. Discussion prompts
-5. Calibration targets confirmed by the user
-6. Optional proposals
-7. Follow-up checks from previous calibrations
+3. Source roles
+4. Project activity
+5. Task shapes
+6. Observed workflow patterns
+7. Discussion prompts
+8. Calibration targets confirmed by the user
+9. Optional proposals
+10. Follow-up checks from previous calibrations
 ```
 
 The main timeline should read like a concise history of human intent and agent

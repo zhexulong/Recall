@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::model::{
     ConversationChunk, ProjectActivitySummary, ReflectFilters, ReflectReport, ReflectScope,
@@ -219,7 +219,7 @@ fn build_project_summaries(
     sessions: &[SourceSession],
     moments: &[TimelineMoment],
 ) -> Vec<ProjectActivitySummary> {
-    let mut summaries: BTreeMap<String, (HashSet<&str>, usize, HashSet<String>)> = BTreeMap::new();
+    let mut summaries: BTreeMap<String, (HashSet<&str>, usize, BTreeSet<String>)> = BTreeMap::new();
     let mut project_by_session: BTreeMap<&str, String> = BTreeMap::new();
 
     for session in sessions {
@@ -690,9 +690,19 @@ mod tests {
             vec![fixture_message("assistant", "Review the release notes", 0, 3100)],
         );
         app_b.directory = Some("/tmp/app-b".to_string());
+        let mut app_b_second_source = fixture_session(
+            "s4",
+            "opencode",
+            "App B second source session",
+            4000,
+            vec![fixture_message("assistant", "Check the release notes", 0, 4100)],
+        );
+        app_b_second_source.directory = Some("/tmp/app-b".to_string());
 
-        let report =
-            build_reflect_report(vec![app_a, app_a_subdir, app_b], &ReflectFilters::default());
+        let report = build_reflect_report(
+            vec![app_a, app_a_subdir, app_b, app_b_second_source],
+            &ReflectFilters::default(),
+        );
 
         assert_eq!(report.project_summaries.len(), 3);
         assert_eq!(report.project_summaries[0].project, "/tmp/app-a");
@@ -702,7 +712,9 @@ mod tests {
         assert_eq!(report.project_summaries[1].project, "/tmp/app-a/subdir");
         assert_eq!(report.project_summaries[1].sources, ["opencode"]);
         assert_eq!(report.project_summaries[2].project, "/tmp/app-b");
-        assert_eq!(report.project_summaries[2].sources, ["codex"]);
+        assert_eq!(report.project_summaries[2].sessions, 2);
+        assert_eq!(report.project_summaries[2].timeline_moments, 2);
+        assert_eq!(report.project_summaries[2].sources, ["codex", "opencode"]);
     }
 
     #[test]
