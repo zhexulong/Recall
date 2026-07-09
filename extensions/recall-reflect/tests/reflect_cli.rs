@@ -6,6 +6,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const JSONL_FIXTURE: &str = r#"{"schema_version":4,"record_type":"session","session":{"id":"s1","source":"codex","source_id":"source-s1","title":"Codex session","directory":"/tmp/repo","repo_remote":"git@example.com:owner/repo.git","repo_slug":"owner/repo","repo_name":"repo","started_at":1000,"updated_at":1200,"message_count":2,"entrypoint":null,"custom_title":null,"summary":null,"duration_minutes":null,"source_file_path":null},"messages":[{"seq":0,"role":"user","timestamp":1000,"content":"please keep scope small"},{"seq":1,"role":"assistant","timestamp":1100,"content":"I will keep it focused"}],"usage_events":[],"events":[]}
 "#;
 
+const BROADER_SIGNALS_JSONL_FIXTURE: &str = r#"{"schema_version":4,"record_type":"session","session":{"id":"s1","source":"codex","source_id":"source-s1","title":"Planning session","directory":"/tmp/app-a","repo_remote":null,"repo_slug":null,"repo_name":null,"started_at":1000,"updated_at":1200,"message_count":1,"entrypoint":null,"custom_title":null,"summary":null,"duration_minutes":null,"source_file_path":null},"messages":[{"seq":0,"role":"assistant","timestamp":1100,"content":"Plan the approach, outline the options, and analyze tradeoffs"}],"usage_events":[],"events":[]}
+{"schema_version":4,"record_type":"session","session":{"id":"s2","source":"opencode","source_id":"source-s2","title":"Implementation session","directory":"/tmp/app-b","repo_remote":null,"repo_slug":null,"repo_name":null,"started_at":2000,"updated_at":2200,"message_count":1,"entrypoint":null,"custom_title":null,"summary":null,"duration_minutes":null,"source_file_path":null},"messages":[{"seq":0,"role":"assistant","timestamp":2100,"content":"Implemented the migration, fixed the test, and verified the build"}],"usage_events":[],"events":[]}
+"#;
+
 #[test]
 fn reflect_cli_reads_export_jsonl_from_recall_bin() {
     let fake = FakeRecall::new(JSONL_FIXTURE, 0, "");
@@ -46,6 +50,34 @@ fn reflect_cli_reads_export_jsonl_from_recall_bin() {
             "export --limit 0 --include metadata,messages --project /tmp/repo --repo owner/repo --source codex --time week"
         ]
     );
+}
+
+#[test]
+fn reflect_cli_json_exposes_broader_signals() {
+    let fake = FakeRecall::new(BROADER_SIGNALS_JSONL_FIXTURE, 0, "");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_recall-reflect"))
+        .env("RECALL_BIN", fake.script_path())
+        .args(["--personal", "--time", "30d", "--format", "json"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(output.stderr.is_empty(), "stderr should be empty on success");
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["source_roles"].as_array().unwrap().len(), 2);
+    assert_eq!(json["source_roles"][0]["source"], "codex");
+    assert_eq!(json["source_roles"][0]["observed_role"], "Planning and analysis");
+    assert_eq!(json["source_roles"][1]["source"], "opencode");
+    assert_eq!(json["source_roles"][1]["observed_role"], "Implementation and verification");
+    assert_eq!(json["project_summaries"].as_array().unwrap().len(), 2);
+    assert_eq!(json["project_summaries"][0]["project"], "/tmp/app-a");
+    assert_eq!(json["project_summaries"][1]["project"], "/tmp/app-b");
+    assert!(json["task_shapes"].as_array().unwrap().len() >= 2);
+
+    let calls = fake.calls();
+    assert_eq!(calls, ["export --limit 0 --include metadata,messages --time 30d"]);
 }
 
 #[test]

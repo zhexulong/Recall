@@ -57,6 +57,43 @@ pub fn render_text(report: &ReflectReport) -> String {
         let _ = writeln!(out);
     }
 
+    if !report.source_roles.is_empty() {
+        let _ = writeln!(out, "Source Roles");
+        for role in &report.source_roles {
+            let _ = writeln!(
+                out,
+                "  - {}: {} ({} sessions, {} moments)",
+                role.source, role.observed_role, role.sessions, role.timeline_moments
+            );
+        }
+        let _ = writeln!(out);
+    }
+
+    if !report.project_summaries.is_empty() {
+        let _ = writeln!(out, "Project Activity");
+        for project in &report.project_summaries {
+            let sources = if project.sources.is_empty() {
+                "-".to_string()
+            } else {
+                project.sources.join(", ")
+            };
+            let _ = writeln!(
+                out,
+                "  - {}: {} sessions, {} moments ({})",
+                project.project, project.sessions, project.timeline_moments, sources
+            );
+        }
+        let _ = writeln!(out);
+    }
+
+    if !report.task_shapes.is_empty() {
+        let _ = writeln!(out, "Task Shapes");
+        for shape in &report.task_shapes {
+            let _ = writeln!(out, "  - {}: {} moments", shape.shape, shape.timeline_moments);
+        }
+        let _ = writeln!(out);
+    }
+
     if !report.observed_patterns.is_empty() {
         let _ = writeln!(out, "Discussion Prompts");
         for pattern in &report.observed_patterns {
@@ -129,5 +166,36 @@ mod tests {
         assert!(text.contains("hello world"), "must include user moment content");
         assert!(text.contains("hi there"), "must include assistant moment content");
         assert!(!text.contains("session_events"), "must not contain raw event names");
+    }
+
+    #[test]
+    fn reflect_text_output_includes_broader_signals() {
+        let sessions = vec![fixture_session(
+            "s1",
+            "codex",
+            "Planning session",
+            1000,
+            vec![fixture_message(
+                "assistant",
+                "Plan the approach, outline the options, and analyze tradeoffs",
+                0,
+                1100,
+            )],
+        )];
+
+        let report = build_reflect_report(sessions, &ReflectFilters::default());
+        let text = render_text(&report);
+
+        let timeline = text.find("Timeline").unwrap();
+        let source_roles = text.find("Source Roles").unwrap();
+        let project_activity = text.find("Project Activity").unwrap();
+        let task_shapes = text.find("Task Shapes").unwrap();
+
+        assert!(timeline < source_roles);
+        assert!(source_roles < project_activity);
+        assert!(project_activity < task_shapes);
+        assert!(text.contains("codex: Planning and analysis"));
+        assert!(text.contains("/tmp/reflect-repo"));
+        assert!(text.contains("planning"));
     }
 }

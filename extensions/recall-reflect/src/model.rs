@@ -112,6 +112,30 @@ pub struct ObservedPattern {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct SourceRoleSummary {
+    pub source: String,
+    pub observed_role: String,
+    pub sessions: usize,
+    pub timeline_moments: usize,
+    pub evidence_moments: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectActivitySummary {
+    pub project: String,
+    pub sessions: usize,
+    pub timeline_moments: usize,
+    pub sources: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskShapeSummary {
+    pub shape: String,
+    pub timeline_moments: usize,
+    pub evidence_moments: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ReflectProposalStub {
     pub note: String,
 }
@@ -122,6 +146,9 @@ pub struct ReflectReport {
     pub summary: ReflectSummary,
     pub chunks: Vec<ConversationChunk>,
     pub phases: Vec<TimelinePhase>,
+    pub source_roles: Vec<SourceRoleSummary>,
+    pub project_summaries: Vec<ProjectActivitySummary>,
+    pub task_shapes: Vec<TaskShapeSummary>,
     pub observed_patterns: Vec<ObservedPattern>,
     pub proposals: Vec<ReflectProposalStub>,
     pub coverage_note: Option<String>,

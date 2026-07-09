@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, HashSet};
 
 use crate::model::{
-    ConversationChunk, ReflectFilters, ReflectReport, ReflectScope, ReflectScopeKind,
-    ReflectSummary, SourceSession, TimelineMoment, TimelinePhase,
+    ConversationChunk, ProjectActivitySummary, ReflectFilters, ReflectReport, ReflectScope,
+    ReflectScopeKind, ReflectSummary, SourceRoleSummary, SourceSession, TaskShapeSummary,
+    TimelineMoment, TimelinePhase,
 };
 use crate::patterns::detect_observed_patterns;
 
@@ -30,6 +31,9 @@ pub fn build_reflect_report(
             summary: ReflectSummary { sessions: 0, timeline_moments: 0, phases: 0 },
             chunks: Vec::new(),
             phases: Vec::new(),
+            source_roles: Vec::new(),
+            project_summaries: Vec::new(),
+            task_shapes: Vec::new(),
             observed_patterns: Vec::new(),
             proposals: Vec::new(),
             coverage_note: Some("No sessions matched the reflect scope.".to_string()),
@@ -74,6 +78,9 @@ pub fn build_reflect_report(
     });
 
     let timeline_moments_count = moments.len();
+    let source_roles = build_source_roles(&sessions, &moments);
+    let project_summaries = build_project_summaries(&sessions, &moments);
+    let task_shapes = build_task_shapes(&moments);
 
     let mut sessions_by_id: BTreeMap<String, Vec<&TimelineMoment>> = BTreeMap::new();
     for moment in &moments {
@@ -138,6 +145,9 @@ pub fn build_reflect_report(
         },
         chunks,
         phases,
+        source_roles,
+        project_summaries,
+        task_shapes,
         observed_patterns,
         proposals: Vec::new(),
         coverage_note: None,
@@ -149,6 +159,121 @@ fn timeline_title(scope_kind: ReflectScopeKind) -> &'static str {
         ReflectScopeKind::Project => "Project conversation timeline",
         ReflectScopeKind::Personal => "Personal conversation timeline",
     }
+}
+
+fn build_source_roles(
+    sessions: &[SourceSession],
+    moments: &[TimelineMoment],
+) -> Vec<SourceRoleSummary> {
+    let mut session_ids_by_source: BTreeMap<String, HashSet<&str>> = BTreeMap::new();
+    for session in sessions {
+        session_ids_by_source
+            .entry(session.source.clone())
+            .or_default()
+            .insert(session.id.as_str());
+    }
+
+    let mut moments_by_source: BTreeMap<String, Vec<&TimelineMoment>> = BTreeMap::new();
+    for moment in moments {
+        moments_by_source.entry(moment.source.clone()).or_default().push(moment);
+    }
+
+    session_ids_by_source
+        .into_iter()
+        .map(|(source, session_ids)| {
+            let source_moments = moments_by_source.remove(&source).unwrap_or_default();
+            SourceRoleSummary {
+                source,
+                observed_role: classify_source_role(&source_moments).to_string(),
+                sessions: session_ids.len(),
+                timeline_moments: source_moments.len(),
+                evidence_moments: source_moments.iter().take(3).map(|m| m.id.clone()).collect(),
+            }
+        })
+        .collect()
+}
+
+fn classify_source_role(moments: &[&TimelineMoment]) -> &'static str {
+    let planning_signals = ["plan", "approach", "outline", "analyze", "tradeoff"];
+    let implementation_signals = ["implement", "fix", "test", "verify", "build", "migration"];
+    let mut planning_hits = 0;
+    let mut implementation_hits = 0;
+
+    for moment in moments {
+        let summary = moment.summary.to_lowercase();
+        planning_hits += planning_signals.iter().filter(|signal| summary.contains(*signal)).count();
+        implementation_hits +=
+            implementation_signals.iter().filter(|signal| summary.contains(*signal)).count();
+    }
+
+    if implementation_hits >= planning_hits && implementation_hits > 0 {
+        "Implementation and verification"
+    } else if planning_hits > 0 {
+        "Planning and analysis"
+    } else {
+        "General conversation"
+    }
+}
+
+fn build_project_summaries(
+    sessions: &[SourceSession],
+    moments: &[TimelineMoment],
+) -> Vec<ProjectActivitySummary> {
+    let mut summaries: BTreeMap<String, (HashSet<&str>, usize, HashSet<String>)> = BTreeMap::new();
+    let mut project_by_session: BTreeMap<&str, String> = BTreeMap::new();
+
+    for session in sessions {
+        let project = session.directory.clone().unwrap_or_else(|| "-".to_string());
+        project_by_session.insert(session.id.as_str(), project.clone());
+        let entry = summaries.entry(project).or_default();
+        entry.0.insert(session.id.as_str());
+        entry.2.insert(session.source.clone());
+    }
+
+    for moment in moments {
+        if let Some(project) = project_by_session.get(moment.session_id.as_str()) {
+            summaries.entry(project.clone()).or_default().1 += 1;
+        }
+    }
+
+    summaries
+        .into_iter()
+        .map(|(project, (session_ids, timeline_moments, sources))| ProjectActivitySummary {
+            project,
+            sessions: session_ids.len(),
+            timeline_moments,
+            sources: sources.into_iter().collect(),
+        })
+        .collect()
+}
+
+fn build_task_shapes(moments: &[TimelineMoment]) -> Vec<TaskShapeSummary> {
+    let shape_signals: [(&str, &[&str]); 4] = [
+        ("planning", &["plan", "approach", "outline", "strategy"]),
+        ("implementation", &["implement", "fix", "code", "migration", "test"]),
+        ("review", &["review", "diff", "verify", "check"]),
+        ("research", &["research", "docs", "compare", "investigate"]),
+    ];
+    let mut evidence_by_shape: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+
+    for moment in moments {
+        let summary = moment.summary.to_lowercase();
+        for (shape, signals) in &shape_signals {
+            if signals.iter().any(|signal| summary.contains(*signal)) {
+                evidence_by_shape.entry(*shape).or_default().push(moment.id.clone());
+                break;
+            }
+        }
+    }
+
+    evidence_by_shape
+        .into_iter()
+        .map(|(shape, evidence_moments)| TaskShapeSummary {
+            shape: shape.to_string(),
+            timeline_moments: evidence_moments.len(),
+            evidence_moments,
+        })
+        .collect()
 }
 
 fn compact_content(content: &str, max_chars: usize) -> String {
@@ -493,6 +618,116 @@ mod tests {
         let report = build_reflect_report(sessions, &ReflectFilters::default());
 
         assert!(report.observed_patterns.is_empty());
+    }
+
+    #[test]
+    fn reflect_report_summarizes_source_roles() {
+        let sessions = vec![
+            fixture_session(
+                "s1",
+                "codex",
+                "Planning session",
+                1000,
+                vec![fixture_message(
+                    "assistant",
+                    "Plan the approach, outline the options, and analyze tradeoffs",
+                    0,
+                    1100,
+                )],
+            ),
+            fixture_session(
+                "s2",
+                "opencode",
+                "Implementation session",
+                2000,
+                vec![fixture_message(
+                    "assistant",
+                    "Implemented the migration, fixed the test, and verified the build",
+                    0,
+                    2100,
+                )],
+            ),
+        ];
+
+        let report = build_reflect_report(sessions, &ReflectFilters::default());
+
+        assert_eq!(report.source_roles.len(), 2);
+        assert_eq!(report.source_roles[0].source, "codex");
+        assert_eq!(report.source_roles[0].observed_role, "Planning and analysis");
+        assert_eq!(report.source_roles[0].sessions, 1);
+        assert_eq!(report.source_roles[0].timeline_moments, 1);
+        assert_eq!(report.source_roles[0].evidence_moments, ["s1:0"]);
+        assert_eq!(report.source_roles[1].source, "opencode");
+        assert_eq!(report.source_roles[1].observed_role, "Implementation and verification");
+        assert_eq!(report.source_roles[1].sessions, 1);
+        assert_eq!(report.source_roles[1].timeline_moments, 1);
+        assert_eq!(report.source_roles[1].evidence_moments, ["s2:0"]);
+    }
+
+    #[test]
+    fn reflect_report_summarizes_project_activity() {
+        let mut app_a = fixture_session(
+            "s1",
+            "codex",
+            "App A session",
+            1000,
+            vec![fixture_message("assistant", "Plan the app work", 0, 1100)],
+        );
+        app_a.directory = Some("/tmp/app-a".to_string());
+        let mut app_a_subdir = fixture_session(
+            "s2",
+            "opencode",
+            "App A subdir session",
+            2000,
+            vec![fixture_message("assistant", "Implemented the app work", 0, 2100)],
+        );
+        app_a_subdir.directory = Some("/tmp/app-a/subdir".to_string());
+        let mut app_b = fixture_session(
+            "s3",
+            "codex",
+            "App B session",
+            3000,
+            vec![fixture_message("assistant", "Review the release notes", 0, 3100)],
+        );
+        app_b.directory = Some("/tmp/app-b".to_string());
+
+        let report =
+            build_reflect_report(vec![app_a, app_a_subdir, app_b], &ReflectFilters::default());
+
+        assert_eq!(report.project_summaries.len(), 3);
+        assert_eq!(report.project_summaries[0].project, "/tmp/app-a");
+        assert_eq!(report.project_summaries[0].sessions, 1);
+        assert_eq!(report.project_summaries[0].timeline_moments, 1);
+        assert_eq!(report.project_summaries[0].sources, ["codex"]);
+        assert_eq!(report.project_summaries[1].project, "/tmp/app-a/subdir");
+        assert_eq!(report.project_summaries[1].sources, ["opencode"]);
+        assert_eq!(report.project_summaries[2].project, "/tmp/app-b");
+        assert_eq!(report.project_summaries[2].sources, ["codex"]);
+    }
+
+    #[test]
+    fn reflect_report_summarizes_task_shapes() {
+        let sessions = vec![fixture_session(
+            "s1",
+            "codex",
+            "Mixed task session",
+            1000,
+            vec![
+                fixture_message("assistant", "Plan the implementation approach", 0, 1100),
+                fixture_message("assistant", "Implemented the migration and tests", 1, 1200),
+                fixture_message("assistant", "Review the diff and verify the build", 2, 1300),
+            ],
+        )];
+
+        let report = build_reflect_report(sessions, &ReflectFilters::default());
+
+        let shapes: Vec<&str> =
+            report.task_shapes.iter().map(|shape| shape.shape.as_str()).collect();
+        assert_eq!(shapes, ["implementation", "planning", "review"]);
+        for shape in &report.task_shapes {
+            assert_eq!(shape.timeline_moments, 1);
+            assert_eq!(shape.evidence_moments.len(), 1);
+        }
     }
 
     #[test]
