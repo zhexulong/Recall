@@ -7,7 +7,7 @@
 - **Created**: 2026-07-09
 - **Owners**: Recall maintainers
 - **Extension**: `recall-reflect`
-- **Stage**: MVP design
+- **Stage**: phased design
 - **Related design**: `docs/extensions.md`
 
 ## Summary
@@ -22,11 +22,13 @@ Reflect supports two first-class views:
   time window.
 - **Project reflection**: repository-scoped reflection over a project timeline.
 
-The default command should open an extension-owned TUI review workbench. The
-workbench turns repeated AI coding friction into actionable observations,
-evidence review, proposal previews, and explicit instruction-file patches.
+The current implementation is a text/JSON project-timeline report. The next
+milestone adds explicit personal and project scope semantics so Reflect can
+support both cross-project personal reflection and repository-scoped continuity.
+Later milestones can add an extension-owned TUI review workbench, proposal
+previews, and explicit instruction-file patches.
 
-The MVP value loop is:
+The long-term value loop is:
 
 ```text
 Reflect
@@ -54,9 +56,9 @@ handoffs, source roles, repeated corrections, and tool-switching friction that
 single-provider tools cannot see.
 
 Reflect should not stop at insight. A report that only says "you often correct
-scope drift" has weak user value. The MVP must help the user apply a confirmed
-lesson to future work, starting with small, previewed patches to repository
-instruction files such as `AGENTS.md` or `CLAUDE.md`.
+scope drift" has weak user value. The product should eventually help the user
+apply a confirmed lesson to future work, starting with small, previewed patches
+to repository instruction files such as `AGENTS.md` or `CLAUDE.md`.
 
 ### Goals
 
@@ -64,12 +66,14 @@ instruction files such as `AGENTS.md` or `CLAUDE.md`.
 - Default to project reflection inside a Git repository.
 - Allow `--personal` to force personal reflection, even inside a repository.
 - Default to personal reflection outside a Git repository.
-- Provide a TUI-first review workbench for observations, evidence, and proposed
-  actions.
+- Preserve the current text/JSON report path while scope semantics mature.
+- Add a TUI-first review workbench for observations, evidence, and proposed
+  actions in a later milestone.
 - Surface repeated friction, source roles, cross-agent handoffs, and workflow
   patterns as observations, not verdicts.
 - Require supporting evidence for each actionable observation.
-- Apply only explicit, previewed instruction-file patches in the MVP.
+- Apply only explicit, previewed instruction-file patches once the apply
+  milestone exists.
 - Consume Recall data only through stable CLI JSON/JSONL output.
 - Preserve machine-readable output for agents with `--format json`.
 
@@ -80,8 +84,7 @@ instruction files such as `AGENTS.md` or `CLAUDE.md`.
 - Do not enforce quiet hours, usage limits, or wellbeing nudges in Recall core.
 - Do not mutate Recall's SQLite database directly from the extension.
 - Do not expose Rust internals or a `recall-core` library crate.
-- Do not build a general-purpose patch engine for arbitrary project files in the
-  MVP.
+- Do not build a general-purpose patch engine for arbitrary project files.
 - Do not auto-edit skills, prompts, project files, or instruction files without
   user approval.
 - Do not replace `recall search`, `recall session`, `recall export`, or the core
@@ -92,9 +95,10 @@ instruction files such as `AGENTS.md` or `CLAUDE.md`.
 Add `recall-reflect` as an official extension that consumes Recall through the
 stable CLI protocol and owns the reflection workflow.
 
-The extension reconstructs conversation-first timelines for a selected scope,
-detects actionable workflow observations, presents evidence in a TUI, drafts
-small proposals, and applies instruction patches only after explicit user
+The extension reconstructs conversation-first timelines for a selected scope and
+detects actionable workflow observations. The initial implementation presents
+those observations in text and JSON. Later milestones add TUI evidence review,
+proposal drafts, and instruction patches that apply only after explicit user
 approval.
 
 ### User Stories
@@ -121,6 +125,25 @@ worked or created friction, so I can adjust how I split tasks across tools.
 As a user who repeatedly corrected an agent for scope expansion, I want Reflect
 to propose a small `AGENTS.md` rule and show the exact diff before applying it,
 so future agents receive the constraint earlier.
+
+### Implemented Baseline
+
+The current `recall-reflect` implementation is intentionally smaller than the
+full product direction:
+
+- it is an official external extension binary named `recall-reflect`;
+- it consumes `recall export --include metadata,messages`;
+- it supports `--project`, `--repo`, `--source`, `--time`, `--sync`, and
+  `--format text|json`;
+- when no project or repo is provided inside a Git repository, it infers the
+  current Git root as project scope;
+- when no project or repo is provided outside a Git repository, it currently
+  exits and asks for an explicit scope;
+- it renders a project conversation timeline, chunks long sessions, filters
+  low-level transcript artifacts, and emits a small discussion-prompt layer.
+
+The implemented baseline does not yet support `--personal`, a TUI output mode,
+proposal persistence, or instruction-file patch application.
 
 ### Notes And Constraints
 
@@ -152,6 +175,9 @@ a broad time window.
 The default personal time window is unresolved. Candidate defaults are 7 days,
 30 days, or another recent range.
 
+The next implementation milestone should make this scope model real before
+building proposal or apply behavior.
+
 ### Command Surface
 
 ```bash
@@ -165,18 +191,22 @@ recall reflect --format json
 
 Options:
 
-- `--personal`: reflect across projects for the selected time/source scope.
+- `--personal`: reflect across projects for the selected time/source scope
+  (next milestone).
 - `--project <path>`: project directory boundary, including child paths.
 - `--repo <identity>`: repository identity such as `owner/repo` or a remote URL.
 - `--time <today|7d|week|30d|month|all>`: time window.
 - `--source <source>`: optional source filter. Repeated values mean a
-  mixed-source reflection.
-- `--format <tui|text|json>`: output mode. Default is `tui`.
+  mixed-source reflection. The current implementation accepts one source; repeated
+  source values are a later enhancement.
+- `--format <text|json>`: implemented output modes. A future TUI milestone may
+  add `tui` and make it the default interactive mode.
 - `--sync`: optionally run incremental sync before reflection.
-- `--include-events`: include summarized low-level events as supporting context.
-- `--include-usage`: include usage records when available.
+- `--include-events`: planned option to include summarized low-level events as
+  supporting context.
+- `--include-usage`: planned option to include usage records when available.
 
-### TUI Review Workbench
+### Future TUI Review Workbench
 
 The default TUI should prioritize action over dashboard polish:
 
@@ -225,9 +255,9 @@ Each actionable observation should include:
 - discussion prompt;
 - optional proposal draft.
 
-### Proposal And Apply Model
+### Future Proposal And Apply Model
 
-The MVP apply target is a repository instruction file:
+The first apply target should be a repository instruction file:
 
 - `AGENTS.md`;
 - `CLAUDE.md`;
@@ -337,19 +367,35 @@ the data plane and query protocol.
 
 ## Graduation Criteria
 
-### MVP
+### Implemented Baseline
+
+- `recall-reflect` is an official extension binary with manifest support.
+- Project reflection works from `metadata,messages`.
+- Text and JSON output render the selected project/repo scope, timeline phases,
+  observed patterns, and proposal stubs.
+- Low-level transcript artifacts are hidden or summarized by default.
+
+### Next Milestone: Personal And Project Scopes
+
+- Scope resolution follows the explicit/personal/project rules above.
+- `--personal` forces personal reflection, including inside a Git repository.
+- `recall reflect` inside a Git repository defaults to project reflection.
+- `recall reflect` outside a Git repository defaults to personal reflection over
+  a recent time window.
+- Text and JSON output include a stable scope kind.
+- Personal reflection provides deterministic source, project, and task-shape
+  summaries without reading SQLite directly.
+
+### Later Milestone: Interactive Review
 
 - `recall reflect` opens the TUI by default.
-- Scope resolution follows the explicit/personal/project rules above.
-- Project reflection works from `metadata,messages`.
-- Personal reflection works for a recent time window.
 - TUI shows actionable observations with evidence ids.
 - TUI previews instruction-file patches.
 - Apply writes only approved instruction-file patches.
 - `--format json` emits machine-readable scope, observations, evidence, and
   proposal stubs.
 
-### Beta
+### Later Milestone: Persistence And Follow-Up
 
 - Saved notes and draft proposals have an extension-owned persistence model.
 - Cross-agent handoff detection is robust enough for mixed-source histories.
