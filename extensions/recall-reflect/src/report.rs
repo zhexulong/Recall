@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, HashSet};
 
 use crate::model::{
-    ConversationChunk, ReflectFilters, ReflectReport, ReflectScope, ReflectSummary, SourceSession,
-    TimelineMoment, TimelinePhase,
+    ConversationChunk, ReflectFilters, ReflectReport, ReflectScope, ReflectScopeKind,
+    ReflectSummary, SourceSession, TimelineMoment, TimelinePhase,
 };
 use crate::patterns::detect_observed_patterns;
 
@@ -116,7 +116,7 @@ pub fn build_reflect_report(
 
         phases.push(TimelinePhase {
             id: "phase-1".to_string(),
-            title: "Project conversation timeline".to_string(),
+            title: timeline_title(filters.scope_kind).to_string(),
             start_at,
             end_at,
             summary: format!(
@@ -141,6 +141,13 @@ pub fn build_reflect_report(
         observed_patterns,
         proposals: Vec::new(),
         coverage_note: None,
+    }
+}
+
+fn timeline_title(scope_kind: ReflectScopeKind) -> &'static str {
+    match scope_kind {
+        ReflectScopeKind::Project => "Project conversation timeline",
+        ReflectScopeKind::Personal => "Personal conversation timeline",
     }
 }
 
@@ -333,6 +340,26 @@ mod tests {
         assert_eq!(report.scope.kind.as_str(), "project");
         let json = serde_json::to_value(&report).unwrap();
         assert_eq!(json["scope"]["kind"], "project");
+    }
+
+    #[test]
+    fn reflect_report_labels_personal_timeline() {
+        let sessions = vec![fixture_session(
+            "s1",
+            "codex",
+            "Personal session",
+            1000,
+            vec![fixture_message("user", "hello", 0, 1100)],
+        )];
+        let filters = ReflectFilters {
+            scope_kind: crate::model::ReflectScopeKind::Personal,
+            time_range: "30d".to_string(),
+            ..ReflectFilters::default()
+        };
+
+        let report = build_reflect_report(sessions, &filters);
+
+        assert_eq!(report.phases[0].title, "Personal conversation timeline");
     }
 
     #[test]

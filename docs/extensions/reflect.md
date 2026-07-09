@@ -133,17 +133,18 @@ full product direction:
 
 - it is an official external extension binary named `recall-reflect`;
 - it consumes `recall export --include metadata,messages`;
-- it supports `--project`, `--repo`, `--source`, `--time`, `--sync`, and
-  `--format text|json`;
+- it supports `--personal`, `--project`, `--repo`, `--source`, `--time`,
+  `--sync`, and `--format text|json`;
 - when no project or repo is provided inside a Git repository, it infers the
   current Git root as project scope;
-- when no project or repo is provided outside a Git repository, it currently
-  exits and asks for an explicit scope;
-- it renders a project conversation timeline, chunks long sessions, filters
-  low-level transcript artifacts, and emits a small discussion-prompt layer.
+- when no project or repo is provided outside a Git repository, it defaults to
+  personal scope over the recent `30d` window;
+- it renders project and personal conversation timelines, chunks long sessions,
+  filters low-level transcript artifacts, and emits a small discussion-prompt
+  layer.
 
-The implemented baseline does not yet support `--personal`, a TUI output mode,
-proposal persistence, or instruction-file patch application.
+The implemented baseline does not yet support a TUI output mode, proposal
+persistence, or instruction-file patch application.
 
 ### Notes And Constraints
 
@@ -172,11 +173,8 @@ The selected scope must be explicit in TUI, text, and JSON output. Personal
 reflection must not silently include all indexed history unless the user chooses
 a broad time window.
 
-The default personal time window is unresolved. Candidate defaults are 7 days,
-30 days, or another recent range.
-
-The next implementation milestone should make this scope model real before
-building proposal or apply behavior.
+The implemented default personal time window is `30d`. Future releases can tune
+that default if user testing shows a different recent window is more useful.
 
 ### Command Surface
 
@@ -191,8 +189,7 @@ recall reflect --format json
 
 Options:
 
-- `--personal`: reflect across projects for the selected time/source scope
-  (next milestone).
+- `--personal`: reflect across projects for the selected time/source scope.
 - `--project <path>`: project directory boundary, including child paths.
 - `--repo <identity>`: repository identity such as `owner/repo` or a remote URL.
 - `--time <today|7d|week|30d|month|all>`: time window.
@@ -303,7 +300,7 @@ conversation:
     "kind": "project",
     "project": "/path/to/repo",
     "repo": "owner/repo",
-    "time": "30d",
+    "time_range": "30d",
     "sources": ["codex", "claude-code"]
   },
   "source_roles": [
@@ -370,19 +367,22 @@ the data plane and query protocol.
 ### Implemented Baseline
 
 - `recall-reflect` is an official extension binary with manifest support.
-- Project reflection works from `metadata,messages`.
-- Text and JSON output render the selected project/repo scope, timeline phases,
-  observed patterns, and proposal stubs.
+- Project and personal reflection work from `metadata,messages`.
+- Text and JSON output render the selected scope kind, project/repo scope,
+  timeline phases, observed patterns, and proposal stubs.
 - Low-level transcript artifacts are hidden or summarized by default.
 
-### Next Milestone: Personal And Project Scopes
+### Completed Milestone: Personal And Project Scopes
 
 - Scope resolution follows the explicit/personal/project rules above.
 - `--personal` forces personal reflection, including inside a Git repository.
 - `recall reflect` inside a Git repository defaults to project reflection.
 - `recall reflect` outside a Git repository defaults to personal reflection over
-  a recent time window.
+  the recent `30d` time window.
 - Text and JSON output include a stable scope kind.
+
+### Next Milestone: Broader Reflection Signals
+
 - Personal reflection provides deterministic source, project, and task-shape
   summaries without reading SQLite directly.
 
