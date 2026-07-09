@@ -1,11 +1,40 @@
 use serde::Serialize;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReflectScopeKind {
+    Project,
+    Personal,
+}
+
+impl ReflectScopeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::Personal => "personal",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct ReflectFilters {
+    pub scope_kind: ReflectScopeKind,
     pub sources: Option<Vec<String>>,
     pub time_range: String,
     pub directory: Option<String>,
     pub repo: Option<String>,
+}
+
+impl Default for ReflectFilters {
+    fn default() -> Self {
+        Self {
+            scope_kind: ReflectScopeKind::Project,
+            sources: None,
+            time_range: String::new(),
+            directory: None,
+            repo: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -29,6 +58,7 @@ pub struct SourceMessage {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ReflectScope {
+    pub kind: ReflectScopeKind,
     pub project: Option<String>,
     pub repo: Option<String>,
     pub time_range: String,

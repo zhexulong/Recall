@@ -13,6 +13,7 @@ pub fn build_reflect_report(
     filters: &ReflectFilters,
 ) -> ReflectReport {
     let scope = ReflectScope {
+        kind: filters.scope_kind,
         project: filters.directory.clone(),
         repo: filters.repo.clone(),
         time_range: if filters.time_range.is_empty() {
@@ -311,6 +312,27 @@ mod tests {
         assert!(report.observed_patterns.is_empty());
         assert!(report.proposals.is_empty());
         assert!(report.chunks.is_empty());
+    }
+
+    #[test]
+    fn reflect_report_includes_project_scope_kind_by_default() {
+        let sessions = vec![fixture_session(
+            "s1",
+            "codex",
+            "Scoped session",
+            1000,
+            vec![fixture_message("user", "hello", 0, 1100)],
+        )];
+        let filters = ReflectFilters {
+            directory: Some("/tmp/reflect-repo".to_string()),
+            ..ReflectFilters::default()
+        };
+
+        let report = build_reflect_report(sessions, &filters);
+
+        assert_eq!(report.scope.kind.as_str(), "project");
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["scope"]["kind"], "project");
     }
 
     #[test]

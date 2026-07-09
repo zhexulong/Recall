@@ -10,6 +10,7 @@ pub fn render_text(report: &ReflectReport) -> String {
     let _ = writeln!(out);
 
     let _ = writeln!(out, "Scope");
+    let _ = writeln!(out, "  Kind: {}", report.scope.kind.as_str());
     let _ = writeln!(out, "  Project: {}", report.scope.project.as_deref().unwrap_or("-"));
     let _ = writeln!(out, "  Repo: {}", report.scope.repo.as_deref().unwrap_or("-"));
     let _ = writeln!(out, "  Time: {}", report.scope.time_range);

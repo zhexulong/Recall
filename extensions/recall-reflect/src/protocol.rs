@@ -4,19 +4,33 @@ use std::process::{Command, Output};
 use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 
-use crate::model::{ReflectFilters, SourceMessage, SourceSession};
+use crate::model::{ReflectFilters, ReflectScopeKind, SourceMessage, SourceSession};
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ReflectArgs {
+    pub scope_kind: ReflectScopeKind,
     pub source: Option<String>,
     pub time: Option<String>,
     pub project: Option<String>,
     pub repo: Option<String>,
 }
 
+impl Default for ReflectArgs {
+    fn default() -> Self {
+        Self {
+            scope_kind: ReflectScopeKind::Project,
+            source: None,
+            time: None,
+            project: None,
+            repo: None,
+        }
+    }
+}
+
 impl ReflectArgs {
     pub fn filters(&self) -> ReflectFilters {
         ReflectFilters {
+            scope_kind: self.scope_kind,
             sources: self.source.as_ref().map(|source| vec![source.clone()]),
             time_range: self.time.clone().unwrap_or_else(|| "All".to_string()),
             directory: self.project.clone(),
