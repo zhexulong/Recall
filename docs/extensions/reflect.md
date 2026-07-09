@@ -1,296 +1,268 @@
-# recall-reflect PRD
+# KEP: recall-reflect
 
-## Goal
+## Metadata
 
-Define the official Reflect extension so Recall can turn local AI coding history
-into a clean timeline of human intent, agent response, corrections, and
-follow-up work.
+- **Status**: Provisional
+- **Type**: Feature
+- **Created**: 2026-07-09
+- **Owners**: Recall maintainers
+- **Extension**: `recall-reflect`
+- **Stage**: MVP design
+- **Related design**: `docs/extensions.md`
 
-Reflect is designed as the official `recall-reflect` extension. Recall core provides session data through the stable CLI JSON/JSONL protocol; the extension owns timeline reconstruction, observed pattern prompts, and future discussion/calibration workflow.
+## Summary
 
-The primary workflow is:
+`recall-reflect` is the official Reflect extension for Recall. It turns local,
+multi-agent AI coding history into an evidence-backed review workflow for how a
+person works with coding agents.
 
-1. A user or coding agent selects a repository root or repository identity.
-2. Recall core finds relevant local sessions for that project.
-3. `recall-reflect` reconstructs a conversation-first timeline across those sessions.
-4. `recall-reflect` surfaces observed workflow patterns as discussion prompts.
-5. The user decides whether any pattern should become a workflow, skill, agent,
-   or instruction-file change.
-6. If the user approves, the extension can prepare an explicit proposal or patch for a
-   later apply step.
+Reflect supports two first-class views:
 
-Reflect is not only a report. The complete product direction is an extension-led reflection and
-calibration loop: inspect the timeline, discuss what the timeline means, propose
-changes only after user confirmation, and later compare new sessions against
-accepted changes.
+- **Personal reflection**: cross-project, cross-agent reflection over a recent
+  time window.
+- **Project reflection**: repository-scoped reflection over a project timeline.
 
-## Problem
+The default command should open an extension-owned TUI review workbench. The
+workbench turns repeated AI coding friction into actionable observations,
+evidence review, proposal previews, and explicit instruction-file patches.
 
-Recall already supports local session indexing, search, export, sharing, usage
-reporting, and session-level actions. Those workflows are session-first: they
-help users find, inspect, and reuse individual conversations.
-
-AI coding work often does not stay inside one session. A project may move from
-Claude Code to Codex, from Codex to OpenCode, or from a long exploration session
-to several focused follow-up sessions. Users also copy agent output into new
-prompts, restart with a cleaner context, retry failed approaches, or gradually
-turn repeated friction into a personal workflow.
-
-That makes reflection different from search. The useful unit is the project
-timeline, not the individual session. A session-first summary can miss the
-larger pattern: how work moved, where misunderstandings repeated, when the user
-changed direction, and which behaviors might be worth preserving or changing.
-
-## Users
-
-- Power users who want to understand and improve their AI-assisted coding
-  workflow from local history.
-- Coding agents that need a clean project timeline before proposing workflow or
-  skill changes.
-- Maintainers who want Recall's reflection behavior to stay local-first,
-  explicit, and reviewable.
-
-## Definitions
-
-- **Reflect**: the official `recall-reflect` extension, a project-level workflow
-  that reconstructs a timeline, surfaces patterns for discussion, and can later
-  produce user-approved change proposals.
-- **Project timeline**: a chronological narrative built from multiple sessions
-  that belong to the same repository or project scope.
-- **Conversation-first timeline**: a timeline focused on user inputs, agent
-  responses, decisions, corrections, and outcomes. Low-level tool calls and raw
-  execution logs are supporting data, not the default narrative.
-- **Observed pattern**: a repeated or notable behavior found in the timeline,
-  such as a handoff between tools, repeated correction, retry loop, or recurring
-  workflow step.
-- **Discussion prompt**: a question that asks the user to confirm, reject, or
-  refine an observed pattern before Recall treats it as a calibration target.
-- **Calibration target**: a user-confirmed pattern that may justify changing a
-  workflow, skill, agent instruction, project process, or instruction file.
-- **Proposal**: an optional, reviewable suggestion generated from a calibration
-  target. A proposal is not applied unless the user explicitly approves it.
-
-## Scope
-
-### In Scope
-
-- Add an official reflect extension workflow scoped by repository root or
-  repository identity.
-- Reconstruct a timeline across relevant local sessions.
-- Keep the default narrative conversation-first: user messages, assistant
-  responses, titles, summaries, timestamps, and source/project metadata.
-- Hide or summarize raw tool calls, file reads/writes, command output, and
-  internal events by default.
-- Surface observed workflow patterns as discussion prompts instead of final
-  judgments.
-- Support optional workflow, skill, agent, project-process, or instruction-file
-  proposals after user confirmation.
-- Keep proposal application explicit and reviewable.
-- Provide machine-readable output for agents in addition to readable terminal
-  output.
-
-### Out of Scope
-
-- Treating reflection as a personality profile or scorecard.
-- Automatically editing skills, prompts, project files, or instruction files
-  without user approval.
-- Uploading reflection data or sharing it remotely by default.
-- Replacing `recall search`, `recall session`, `recall export`, or the TUI.
-- Making low-level tool/event logs the primary report format.
-
-## Product Model
-
-Reflect has five product layers. They describe the complete extension capability; an
-implementation can deliver them incrementally.
-
-### 1. Timeline Reconstruction
-
-The user-facing input should stay simple. The common command should be Recall's
-extension dispatch, based on the current repository or an explicit repository
-root:
-
-```bash
-recall reflect --project /path/to/repo
-recall reflect --repo owner/repo
-```
-
-Direct extension invocation is acceptable for testing and development:
-
-```bash
-recall-reflect --project /path/to/repo
-recall-reflect --repo owner/repo
-```
-
-Internally, the extension consumes indexed session metadata and messages through
-Recall's stable CLI protocol with `recall export --include metadata,messages`.
-Future modes may opt into usage or event records only when they need that extra
-context. These inputs should not make the user-facing command feel complex.
-
-The output of this layer is a chronological project narrative. Sessions are
-evidence sources, but the top-level structure is time.
-
-Large project histories must not be handled by sending one full timeline to an
-agent or model. Reflect should build a multi-resolution timeline: compact session
-or time-window summaries first, then phase summaries, then a project-level
-reflection. The user can drill back into the supporting sessions when needed, but
-the default report should stay within a readable and reviewable size.
-
-### 2. Conversation Reflection
-
-The extension then looks for workflow patterns in the clean conversation timeline:
-
-- work continuing across sessions or tools;
-- agent output becoming the next prompt or direction;
-- repeated corrections or redirections;
-- repeated planning, debugging, review, or verification loops;
-- manual multi-step workflows that recur across sessions;
-- places where the user and agent appear to disagree about scope or timing.
-
-These patterns should be phrased as observations and questions, not verdicts.
-For example:
+The MVP value loop is:
 
 ```text
-This timeline shows several points where implementation expanded after the user
-had narrowed the scope. Is that a real workflow problem, or are these unrelated
-moments?
+Reflect
+  -> actionable observations
+  -> evidence review
+  -> proposal preview
+  -> user approval
+  -> instruction patch
 ```
 
-### 3. User-Guided Calibration
+## Motivation
 
-The extension should not convert every observation into a rule. The user confirms which
-patterns matter.
+Recall already indexes local sessions from multiple coding agents and exposes
+stable JSON/JSONL query surfaces. Current workflows are session-first: search,
+inspect, export, share, and usage reporting.
 
-The calibration step turns an observed pattern into a target only after user
-input:
+AI coding work is not session-first in practice. A user may plan in Claude Code,
+implement in Codex, review in OpenCode, restart with a cleaner context, copy one
+agent's output into another, or repeatedly correct the same behavior across
+projects.
 
-```text
-Observed pattern: scope expanded during implementation in several timeline
-moments.
+Provider-specific reflection dashboards can only see one product's history.
+Recall can reflect over mixed local history from many coding agents and show
+handoffs, source roles, repeated corrections, and tool-switching friction that
+single-provider tools cannot see.
 
-What should Recall do with this?
-1. Ignore it.
-2. Keep it as a note for future reflection.
-3. Draft a workflow change.
-4. Draft an agent/skill/instruction change.
-```
+Reflect should not stop at insight. A report that only says "you often correct
+scope drift" has weak user value. The MVP must help the user apply a confirmed
+lesson to future work, starting with small, previewed patches to repository
+instruction files such as `AGENTS.md` or `CLAUDE.md`.
 
-This keeps Reflect discussion-first. The extension helps surface patterns; the user
-decides whether they are real, useful, or actionable.
+### Goals
 
-### 4. Proposal Generation
+- Support personal and project reflection as first-class views.
+- Default to project reflection inside a Git repository.
+- Allow `--personal` to force personal reflection, even inside a repository.
+- Default to personal reflection outside a Git repository.
+- Provide a TUI-first review workbench for observations, evidence, and proposed
+  actions.
+- Surface repeated friction, source roles, cross-agent handoffs, and workflow
+  patterns as observations, not verdicts.
+- Require supporting evidence for each actionable observation.
+- Apply only explicit, previewed instruction-file patches in the MVP.
+- Consume Recall data only through stable CLI JSON/JSONL output.
+- Preserve machine-readable output for agents with `--format json`.
 
-After confirmation, the extension can generate reviewable proposals. Proposal types may
-include:
+### Non-Goals
 
-- **Workflow proposal**: a new repeatable process or checkpoint.
-- **Skill proposal**: a draft skill or a suggested change to an existing skill.
-- **Agent behavior proposal**: a rule or behavior for an agent to follow in a
-  specific situation.
-- **Instruction-file proposal**: a suggested change for files such as
-  `AGENTS.md` or `CLAUDE.md`.
-- **Project-process proposal**: a project-level practice such as a checklist,
-  handoff note, test gate, or review habit.
+- Do not make Reflect a personality profile or scorecard.
+- Do not rank agents as a universal leaderboard.
+- Do not enforce quiet hours, usage limits, or wellbeing nudges in Recall core.
+- Do not mutate Recall's SQLite database directly from the extension.
+- Do not expose Rust internals or a `recall-core` library crate.
+- Do not build a general-purpose patch engine for arbitrary project files in the
+  MVP.
+- Do not auto-edit skills, prompts, project files, or instruction files without
+  user approval.
+- Do not replace `recall search`, `recall session`, `recall export`, or the core
+  Recall TUI.
 
-Each proposal should explain:
+## Proposal
 
-- what would change;
-- why this pattern led to the proposal;
-- which timeline moments are relevant;
-- what the user needs to approve before anything is written.
+Add `recall-reflect` as an official extension that consumes Recall through the
+stable CLI protocol and owns the reflection workflow.
 
-### 5. Apply, Track, And Re-Reflect
+The extension reconstructs conversation-first timelines for a selected scope,
+detects actionable workflow observations, presents evidence in a TUI, drafts
+small proposals, and applies instruction patches only after explicit user
+approval.
 
-The complete loop does not end at proposal generation. If a user accepts a
-proposal, the extension should be able to track that calibration and revisit it later.
+### User Stories
 
-Future reflection can then answer:
+#### Personal reflection
 
-- What workflow or instruction change was accepted?
-- Which sessions happened after the change?
-- Did the same pattern disappear, continue, or change shape?
-- Did the accepted change create a new kind of friction?
+As a user who mixes Claude Code, Codex, OpenCode, and other agents, I want to
+see how I used them over the last week or month, so I can understand which
+agents I use for planning, implementation, review, debugging, and cleanup.
 
-This turns Reflect from a one-time summary into a long-term local feedback loop
-for AI-assisted development.
+#### Project reflection
 
-## Command Design
+As a user starting work in a repository, I want `recall reflect` to summarize
+recent project sessions and repeated friction, so I can continue work with the
+right constraints in mind.
 
-### `recall reflect`
+#### Cross-agent handoff review
 
-Reflect on the current or selected project timeline through Recall's extension dispatch.
+As a user who moves work between agents, I want Reflect to show where handoffs
+worked or created friction, so I can adjust how I split tasks across tools.
+
+#### Apply a lesson
+
+As a user who repeatedly corrected an agent for scope expansion, I want Reflect
+to propose a small `AGENTS.md` rule and show the exact diff before applying it,
+so future agents receive the constraint earlier.
+
+### Notes And Constraints
+
+- Core remains the data plane and stable query protocol owner.
+- Reflect is an external executable named `recall-reflect`.
+- Reflect must not read `recall.db` directly.
+- Transcript reflection should work from `metadata,messages`.
+- Usage and event records are optional context for timing, token-heavy loops, or
+  source-role analysis.
+- Progress and diagnostics go to stderr. Machine output stays on stdout.
+
+## Design Details
+
+### Scope Resolution
+
+Reflect supports explicit and inferred scopes:
+
+1. `--personal` forces personal reflection, even inside a repository.
+2. `--project <path>` or `--repo <identity>` forces project reflection.
+3. With no explicit scope inside a Git repository, Reflect defaults to the
+   current repository.
+4. With no explicit scope outside a Git repository, Reflect defaults to personal
+   reflection over a recent time window.
+
+The selected scope must be explicit in TUI, text, and JSON output. Personal
+reflection must not silently include all indexed history unless the user chooses
+a broad time window.
+
+The default personal time window is unresolved. Candidate defaults are 7 days,
+30 days, or another recent range.
+
+### Command Surface
 
 ```bash
 recall reflect
+recall reflect --personal --time 30d
 recall reflect --project /path/to/repo
 recall reflect --repo owner/repo
-recall reflect --time 30d
+recall reflect --personal --source codex --source claude-code --time 7d
 recall reflect --format json
 ```
 
 Options:
 
+- `--personal`: reflect across projects for the selected time/source scope.
 - `--project <path>`: project directory boundary, including child paths.
 - `--repo <identity>`: repository identity such as `owner/repo` or a remote URL.
-- `--time <today|7d|week|30d|month|all>`: time window, default `all` or a
-  product-chosen recent default.
-- `--source <source>`: optional source filter for focused inspection.
-- `--format <text|json>`: default `text`.
+- `--time <today|7d|week|30d|month|all>`: time window.
+- `--source <source>`: optional source filter. Repeated values mean a
+  mixed-source reflection.
+- `--format <tui|text|json>`: output mode. Default is `tui`.
 - `--sync`: optionally run incremental sync before reflection.
 - `--include-events`: include summarized low-level events as supporting context.
+- `--include-usage`: include usage records when available.
 
-When no project or repo is provided, Recall should prefer the current repository
-root when it can be resolved. If no repository can be resolved, the command
-should ask the calling agent or user to choose a project scope rather than
-reflecting over all history by accident.
+### TUI Review Workbench
 
-### `recall reflect propose`
-
-Draft a proposal from a selected or confirmed calibration target.
-
-```bash
-recall reflect propose --id <target-id>
-recall reflect propose --id <target-id> --kind workflow
-recall reflect propose --id <target-id> --kind instruction --target AGENTS.md
-```
-
-This command prepares a proposal. It does not apply it.
-
-### `recall reflect apply`
-
-Apply a proposal after explicit user approval.
-
-```bash
-recall reflect apply --proposal <proposal-id> --dry-run
-recall reflect apply --proposal <proposal-id>
-```
-
-`--dry-run` should show the exact change. Applying should be a separate,
-deliberate action.
-
-## Output Design
-
-Readable output should prefer short sections:
+The default TUI should prioritize action over dashboard polish:
 
 ```text
-Recall reflect for <project>:
-
-1. Timeline
-2. Observed workflow patterns
-3. Discussion prompts
-4. Calibration targets confirmed by the user
-5. Optional proposals
-6. Follow-up checks from previous calibrations
+[ Observations ]        [ Evidence ]              [ Proposal / Diff ]
+scope drift x4          session + moment ids       AGENTS.md patch
+missing tests x3        source + timestamp         Apply / Dismiss
+handoff friction x2     concise excerpts           Save note / Draft
 ```
 
-The main timeline should not read like a tool log. It should read like a concise
-history of human intent and agent response.
+The left pane is an actionable observation queue. The middle pane explains why
+an observation exists. The right pane shows what the user can do with it.
 
-For long histories, output should be layered rather than exhaustive:
+Supported MVP actions:
 
-1. a short project-level summary;
-2. a small number of timeline phases;
-3. representative moments under each phase;
-4. optional drill-down commands or ids for deeper inspection.
+- **Dismiss**: reject the observation.
+- **Save note**: keep the observation without modifying a repository.
+- **Draft**: create a proposal but do not apply it.
+- **Apply**: apply a previewed instruction-file patch after confirmation.
+
+When personal reflection runs outside a repository, actions that require an
+instruction patch should ask the user to choose a target repository or stay in
+note/draft mode.
+
+### Observation Model
+
+Reflect should identify repeated or notable workflow patterns, including:
+
+- repeated scope expansion or scope-boundary reminders;
+- repeated missing verification or testing reminders;
+- repeated over-engineering or simplification requests;
+- cross-session continuation of the same task;
+- cross-agent handoffs where one source shapes the next prompt or direction;
+- recurring source roles, such as exploration in one agent and implementation in
+  another;
+- repeated planning, debugging, review, or verification loops;
+- disagreement between user and agent about scope or timing.
+
+Each actionable observation should include:
+
+- stable observation id;
+- concise summary;
+- source roles or affected sources when relevant;
+- supporting session ids and moment ids;
+- representative excerpts or summaries;
+- discussion prompt;
+- optional proposal draft.
+
+### Proposal And Apply Model
+
+The MVP apply target is a repository instruction file:
+
+- `AGENTS.md`;
+- `CLAUDE.md`;
+- future instruction files discovered by project conventions.
+
+Proposal previews must show:
+
+- target file;
+- exact diff;
+- evidence moments that justify the rule;
+- what the user must approve before anything is written.
+
+Apply must be separate and deliberate. It must never happen from observation
+detection alone.
+
+### Text Output
+
+Text output should be concise and layered:
+
+```text
+Recall reflect for <scope>:
+
+1. Scope summary
+2. Timeline
+3. Observed workflow patterns
+4. Discussion prompts
+5. Calibration targets confirmed by the user
+6. Optional proposals
+7. Follow-up checks from previous calibrations
+```
+
+The main timeline should read like a concise history of human intent and agent
+response, not a tool log.
+
+### JSON Output
 
 JSON output should preserve enough structure for agents to continue the
 conversation:
@@ -298,10 +270,19 @@ conversation:
 ```json
 {
   "scope": {
+    "kind": "project",
     "project": "/path/to/repo",
     "repo": "owner/repo",
-    "time": "30d"
+    "time": "30d",
+    "sources": ["codex", "claude-code"]
   },
+  "source_roles": [
+    {
+      "source": "claude-code",
+      "observed_role": "Exploration and broad planning",
+      "evidence_moments": ["moment-1", "moment-3"]
+    }
+  ],
   "timeline": [
     {
       "id": "moment-1",
@@ -324,72 +305,129 @@ conversation:
 }
 ```
 
-## Agent-Friendly Workflows
+## Risks And Mitigations
 
-### Reflect Before Planning
+### False pattern detection
 
-```bash
-recall reflect --project /path/to/repo --time 30d --format json
-# Agent summarizes the timeline and asks which pattern, if any, the user wants to calibrate.
-```
+Reflect may infer a pattern from unrelated moments.
 
-### Draft A Workflow Proposal
+Mitigation: phrase findings as observations and prompts, require evidence ids,
+and require user confirmation before proposals or patches.
 
-```bash
-recall reflect --project /path/to/repo
-# User confirms a pattern.
-recall reflect propose --id <target-id> --kind workflow
-```
+### Over-broad personal reflection
 
-### Preview An Instruction Change
+Personal reflection can combine private intent across projects.
 
-```bash
-recall reflect propose --id <target-id> --kind instruction --target AGENTS.md
-recall reflect apply --proposal <proposal-id> --dry-run
-# User reviews the exact diff before applying.
-```
+Mitigation: default to a recent window, make the scope explicit, summarize by
+default, and avoid broad transcript excerpts unless requested.
 
-## Privacy And Safety
+### Unsafe apply behavior
 
-- Reflection data comes from local session history.
-- Reports should summarize transcript content. They should not paste full
-  transcripts unless explicitly requested.
-- Low-level tool calls, file paths, command output, and internal events should
-  be hidden or summarized by default.
-- Reflect should not automatically modify source files, project configuration,
-  skills, prompts, or instruction files.
-- Proposal application must require explicit user approval.
-- Shared or exported reflection output may contain private intent and project
-  context; sharing belongs behind an explicit user action.
+Instruction patches can change future agent behavior.
 
-## Backward Compatibility
+Mitigation: MVP apply only targets instruction files, always shows a diff, and
+requires explicit user approval.
 
-- Existing commands keep working: `recall search`, `recall session`,
-  `recall export`, `recall import`, `recall usage`, `recall share init`, and
-  the TUI remain unchanged.
-- Existing session export schemas remain useful as internal data sources for
-  reflection.
-- Reflect can be added without changing existing session-level workflows.
+### Core boundary creep
 
-## Relationship To Existing Skill Workflows
+Reflection features could pressure Recall core to become a workflow engine.
 
-Some agent skill systems already encode behavior learned from repeated AI coding
-friction. The extension should treat those systems as possible calibration targets,
-not as required dependencies.
+Mitigation: keep Reflect as an extension consuming stable CLI output. Core stays
+the data plane and query protocol.
 
-For example, a user might use reflection to decide that a recurring pattern
-should become a new workflow, a skill change, or an instruction-file rule. The extension
-should help prepare that proposal, but the user remains responsible for deciding
-whether to adopt it.
+## Graduation Criteria
+
+### MVP
+
+- `recall reflect` opens the TUI by default.
+- Scope resolution follows the explicit/personal/project rules above.
+- Project reflection works from `metadata,messages`.
+- Personal reflection works for a recent time window.
+- TUI shows actionable observations with evidence ids.
+- TUI previews instruction-file patches.
+- Apply writes only approved instruction-file patches.
+- `--format json` emits machine-readable scope, observations, evidence, and
+  proposal stubs.
+
+### Beta
+
+- Saved notes and draft proposals have an extension-owned persistence model.
+- Cross-agent handoff detection is robust enough for mixed-source histories.
+- Usage/events can enrich selected personal reflection layers without becoming
+  the main report.
+- Follow-up reflection can compare sessions before and after accepted patches.
+
+### Stable
+
+- Proposal targets beyond instruction files are intentionally selected and
+  covered by tests.
+- Personal and project reflection have stable output semantics.
+- TUI flows are covered by regression tests for scope selection, preview, apply,
+  and cancel paths.
+
+## Production Readiness Review
+
+### Operational impact
+
+Reflect runs as an external command. It should not add background services or
+long-running core processes in the MVP.
+
+### Security and privacy
+
+Reflect reads local session history through Recall's CLI. It must not upload
+data or share reports by default. Sensitive content should be summarized at a
+high level in personal reflection.
+
+### Observability
+
+Machine output belongs on stdout. Progress, warnings, sync messages, and apply
+diagnostics belong on stderr.
+
+### Rollback
+
+Instruction patches should be normal file diffs in the user's repository. Users
+can review, revert, or edit them with standard Git workflows.
+
+## Alternatives
+
+### Report-only Reflect
+
+A report-only workflow is simpler, but it produces weaker user value. It helps
+users see patterns without helping them change future agent behavior.
+
+### Core TUI integration first
+
+Embedding Reflect into Recall's core TUI would make it feel native, but it would
+increase core surface area and test complexity. An extension-owned TUI keeps the
+boundary cleaner.
+
+### Usage dashboard extension
+
+A usage-first dashboard would overlap with existing usage reporting. Reflect
+should use usage as optional supporting context, not as the main product.
+
+### Agent leaderboard
+
+Ranking agents is easy to understand but misleading. Different sources are used
+for different tasks. Reflect should describe source roles and friction instead
+of declaring a universal winner.
 
 ## Open Questions
 
-- Should `recall reflect` default to a recent time window or all indexed history?
-- Should calibration targets be persisted in Recall's local database, written as
-  files, or only emitted in reports at first?
-- Should proposal application support only instruction files first, or also
-  skills and project workflow documents?
+- What should the default personal reflection window be outside a repository:
+  7 days, 30 days, or another recent range?
+- Should saved notes and draft proposals be written as extension-owned files, or
+  only emitted in reports at first?
+- After instruction-file patches, which proposal targets should come next:
+  skills, project workflow documents, or personal agent preferences?
 - How should Reflect show optional low-level event context without turning the
   main report into a tool log?
-- Should future TUI support show Reflect as a new dashboard, a usage tab, or a
-  session-adjacent view?
+- Which personal reflection layers should use usage/events data, and which
+  should stay transcript-only?
+- How should cross-agent handoffs be detected without relying on fragile source
+  ordering or full transcript prompts?
+
+## Implementation History
+
+- 2026-07-09: Initial Reflect design reframed as a KEP-style proposal with
+  personal and project views, TUI-first MVP, and instruction patch apply loop.
