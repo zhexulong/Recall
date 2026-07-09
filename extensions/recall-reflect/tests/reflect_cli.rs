@@ -33,6 +33,7 @@ fn reflect_cli_reads_export_jsonl_from_recall_bin() {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["summary"]["sessions"], 1);
     assert_eq!(json["summary"]["timeline_moments"], 2);
+    assert_eq!(json["scope"]["kind"], "project");
     assert_eq!(json["scope"]["project"], "/tmp/repo");
     assert_eq!(json["scope"]["repo"], "owner/repo");
     assert_eq!(json["scope"]["time_range"], "week");
@@ -98,6 +99,7 @@ fn reflect_cli_defaults_unscoped_reflection_to_current_git_root() {
     assert!(output.stderr.is_empty(), "stderr should be empty on success");
 
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["scope"]["kind"], "project");
     assert_eq!(json["scope"]["project"], repo.path().display().to_string());
 
     let calls = fake.calls();
@@ -111,22 +113,72 @@ fn reflect_cli_defaults_unscoped_reflection_to_current_git_root() {
 }
 
 #[test]
-fn reflect_cli_requires_explicit_scope_outside_git_worktree() {
+fn reflect_cli_defaults_to_personal_scope_outside_git_worktree() {
     let fake = FakeRecall::new(JSONL_FIXTURE, 0, "");
     let non_git = TempDir::new("recall-reflect-non-git");
 
     let output = Command::new(env!("CARGO_BIN_EXE_recall-reflect"))
         .env("RECALL_BIN", fake.script_path())
         .current_dir(non_git.path())
+        .arg("--format")
+        .arg("json")
         .output()
         .unwrap();
 
-    assert!(!output.status.success(), "command should fail outside git without scope");
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(output.stderr.is_empty(), "stderr should be empty on success");
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["scope"]["kind"], "personal");
+    assert_eq!(json["scope"]["project"], serde_json::Value::Null);
+    assert_eq!(json["scope"]["repo"], serde_json::Value::Null);
+    assert_eq!(json["scope"]["time_range"], "30d");
+
+    let calls = fake.calls();
+    assert_eq!(calls, ["export --limit 0 --include metadata,messages --time 30d"]);
+}
+
+#[test]
+fn reflect_cli_personal_overrides_git_root_scope() {
+    let fake = FakeRecall::new(JSONL_FIXTURE, 0, "");
+    let repo = TempDir::new("recall-reflect-repo");
+    init_git_repo(repo.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_recall-reflect"))
+        .env("RECALL_BIN", fake.script_path())
+        .current_dir(repo.path())
+        .args(["--personal", "--time", "7d", "--format", "json"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(output.stderr.is_empty(), "stderr should be empty on success");
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["scope"]["kind"], "personal");
+    assert_eq!(json["scope"]["project"], serde_json::Value::Null);
+    assert_eq!(json["scope"]["time_range"], "7d");
+
+    let calls = fake.calls();
+    assert_eq!(calls, ["export --limit 0 --include metadata,messages --time 7d"]);
+}
+
+#[test]
+fn reflect_cli_rejects_personal_with_project_or_repo_scope() {
+    let fake = FakeRecall::new(JSONL_FIXTURE, 0, "");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_recall-reflect"))
+        .env("RECALL_BIN", fake.script_path())
+        .args(["--personal", "--project", "/tmp/repo"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "command should reject conflicting scope flags");
     assert!(output.stdout.is_empty(), "stdout must be empty on scope errors");
     let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--personal"), "stderr: {stderr}");
     assert!(stderr.contains("--project") || stderr.contains("--repo"), "stderr: {stderr}");
-
-    assert!(fake.calls().is_empty(), "export must not run without an explicit or inferred scope");
+    assert!(fake.calls().is_empty(), "export must not run for invalid scope flags");
 }
 
 #[test]
